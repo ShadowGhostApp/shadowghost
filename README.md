@@ -83,6 +83,17 @@ graph TB
     Peer1 -.->|"relay"| Peer3
 ```
 
+## 🔒 Security
+
+Shadow Ghost uses modern cryptographic algorithms:
+
+- **AES-256** for message encryption  
+- **RSA-4096** for key exchange  
+- **SHA-256** for hashing  
+- **QUIC protocol** for secure transmission  
+
+---
+
 ## 🎯 Supported Platforms
 
 | Platform  | Status   |
@@ -102,17 +113,6 @@ We welcome any contribution to the project development!
 - 📋 Technical Documentation: [**`CONTRIBUTING.md`**](CONTRIBUTING.md)
 - 🐛 Report Bug: [**Issues**](../../issues)
 - 💡 Suggest Enhancement: [**Discussions**](../../discussions)
-
----
-
-## 🔒 Security
-
-Shadow Ghost uses modern cryptographic algorithms:
-
-- **AES-256** for message encryption  
-- **RSA-4096** for key exchange  
-- **SHA-256** for hashing  
-- **QUIC protocol** for secure transmission  
 
 ---
 
