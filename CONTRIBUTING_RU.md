@@ -2,8 +2,8 @@
 
 ## Технологический стек
 
-- **Backend**: Rust 1.70+
-- **Frontend**: Flutter 3.0+
+- **Backend**: Rust
+- **Frontend**: Flutter
 - **Криптография**: AES-256, RSA-4096, QUIC
 
 ## Настройка среды
