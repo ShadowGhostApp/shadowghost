@@ -2,10 +2,9 @@
 
 ## Tech Stack
 
-- **Backend**: Rust 1.70+
-- **Frontend**: Flutter 3.0+
+- **Backend**: Rust
+- **Frontend**: Flutter
 - **Cryptography**: AES-256, RSA-4096, QUIC
-- **Architecture**: P2P decentralized
 
 ## Development Setup
 
