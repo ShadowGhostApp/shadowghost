@@ -1,6 +1,29 @@
 [package]
-name = "rust"
+name = "shadowghost"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1.0"
+base32 = "0.5.1"
+ring = "0.17.14"
+toml = "0.9.5"
+clap = "4.0"
+env_logger = "0.11"
+tempfile = "3.0"
+futures = "0.3"
+
+[features]
+benchmark = []
+
+[lib]
+name = "shadowghost"
+path = "src/lib.rs"
+
+[[bin]]
+name = "main"
+path = "src/bin/main.rs"
