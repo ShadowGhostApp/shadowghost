@@ -39,44 +39,39 @@
 ## 🏗️ Архитектура проекта
 
 ```mermaid
-graph TB
-    classDef flutter fill:#2196F3,stroke:#1976D2,stroke-width:3px,color:#fff
-    classDef rust fill:#CE422B,stroke:#8B2500,stroke-width:3px,color:#fff  
-    classDef user fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
-    classDef network fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
-
-    subgraph " "
-        direction TB
-        UI["📱 Пользовательский интерфейс"]:::flutter
-        Logic["🧠 Бизнес-логика"]:::flutter
-    end
+flowchart TD
+    Start([📱 Пользователь открывает ShadowGhost])
     
-    subgraph "  "
-        direction LR  
-        Protocol["🔗 ShadowProtocol"]:::rust
-        P2P["🌐 P2P сеть"]:::network
-        Crypto["🔐 Криптография"]:::rust
-    end
+    IP[☁️ Узнать мой публичный IP<br/>через STUN сервер]
     
-    subgraph "   "
-        direction TB
-        Peer1["👤 Пользователь 1"]:::user
-        Peer2["👤 Пользователь 2"]:::user  
-        Peer3["👤 Пользователь N"]:::user
-    end
+    Join[🚀 Войти в P2P сеть<br/>через Bootstrap узел]
     
-    UI -.->|"асинхронные вызовы"| Logic
-    Logic ==>|"FFI-мост"| Protocol
-    Protocol -.->|"создает"| P2P
-    Protocol ==>|"шифрует с помощью"| Crypto
+    Find[🔍 Найти адрес друга<br/>в базе сети]
     
-    P2P ~~~ Peer1
-    P2P -.-> Peer2
-    P2P ==> Peer3
+    Connect{🎯 Попробовать прямое соединение}
     
-    Peer1 <-.->|"прямое"| Peer2
-    Peer2 <-.->|"mesh-сеть"| Peer3  
-    Peer1 -.->|"ретрансляция"| Peer3
+    Direct[✅ Прямой P2P чат<br/>Быстро и приватно]
+    
+    Relay[🔄 Через сервер-посредник<br/>Всё равно работает!]
+    
+    Chat([💬 Зашифрованная переписка])
+    
+    Start --> IP
+    IP --> Join
+    Join --> Find
+    Find --> Connect
+    Connect -->|Успех| Direct
+    Connect -->|Заблокировано| Relay
+    Direct --> Chat
+    Relay --> Chat
+    
+    classDef process fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef decision fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef result fill:#2196F3,stroke:#1565C0,color:#fff
+    
+    class Start,IP,Join,Find,Chat process
+    class Connect decision
+    class Direct,Relay result
 ```
 
 ## 🎯 Поддерживаемые платформы
