@@ -39,48 +39,39 @@
 ## 🏗️ Project Architecture
 
 ```mermaid
-graph TB
-    %% Стиль для более органичного вида
-    classDef flutter fill:#2196F3,stroke:#1976D2,stroke-width:3px,color:#fff
-    classDef rust fill:#CE422B,stroke:#8B2500,stroke-width:3px,color:#fff  
-    classDef user fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
-    classDef network fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
-
-    subgraph " "
-        direction TB
-        UI["📱 User Interface"]:::flutter
-        Logic["🧠 Business Logic"]:::flutter
-    end
+flowchart TD
+    Start([📱 User opens ShadowGhost])
     
-    subgraph "  "
-        direction LR  
-        Protocol["🔗 ShadowProtocol"]:::rust
-        P2P["🌐 P2P Network"]:::network
-        Crypto["🔐 Cryptography"]:::rust
-    end
+    IP[☁️ Discover my public IP<br/>via STUN server]
     
-    subgraph "   "
-        direction TB
-        Peer1["👤 User 1"]:::user
-        Peer2["👤 User 2"]:::user  
-        Peer3["👤 User N"]:::user
-    end
+    Join[🚀 Join P2P network<br/>via Bootstrap node]
     
-    %% Связи с изгибами
-    UI -.->|"async calls"| Logic
-    Logic ==>|"FFI bridge"| Protocol
-    Protocol -.->|"spawns"| P2P
-    Protocol ==>|"encrypts with"| Crypto
+    Find[🔍 Find friend's address<br/>in network database]
     
-    %% P2P соединения (неровные)
-    P2P ~~~ Peer1
-    P2P -.-> Peer2
-    P2P ==> Peer3
+    Connect{🎯 Try direct connection}
     
-    %% Прямые P2P связи
-    Peer1 <-.->|"direct"| Peer2
-    Peer2 <-.->|"mesh"| Peer3  
-    Peer1 -.->|"relay"| Peer3
+    Direct[✅ Direct P2P chat<br/>Fast & Private]
+    
+    Relay[🔄 Route via relay server<br/>Still works!]
+    
+    Chat([💬 Encrypted messaging])
+    
+    Start --> IP
+    IP --> Join
+    Join --> Find
+    Find --> Connect
+    Connect -->|Success| Direct
+    Connect -->|Blocked| Relay
+    Direct --> Chat
+    Relay --> Chat
+    
+    classDef process fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef decision fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef result fill:#2196F3,stroke:#1565C0,color:#fff
+    
+    class Start,IP,Join,Find,Chat process
+    class Connect decision
+    class Direct,Relay result
 ```
 
 ## 🔒 Security
