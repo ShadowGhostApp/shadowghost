@@ -36,42 +36,54 @@
 - 🔐 **Сквозное шифрование** — защита всех данных
 - 🚀 **Кроссплатформенность** — Android, Windows, Linux
 
-## 🏗️ Архитектура проекта
-
+## ❓ Как это работает?
+  
 ```mermaid
-flowchart TD
-    Start([📱 Пользователь открывает ShadowGhost])
+graph LR
+    subgraph HomeNetwork [Домашняя сеть]
+        Alice[Алиса ShadowGhost]
+        HomeRouter[Домашний роутер]
+        Alice --> HomeRouter
+    end
     
-    IP[☁️ Узнать мой публичный IP<br/>через STUN сервер]
+    subgraph OfficeNetwork [Офисная сеть]
+        Bob[Боб ShadowGhost]
+        OfficeRouter[Офисный роутер]
+        Bob --> OfficeRouter
+    end
     
-    Join[🚀 Войти в P2P сеть<br/>через Bootstrap узел]
+    subgraph InternetServices [Интернет сервисы]
+        STUNServer[STUN сервер]
+        RelayServer[TURN реле]
+    end
     
-    Find[🔍 Найти адрес друга<br/>в базе сети]
+    subgraph ManualProcess [Ручной обмен контактами]
+        SGLinkGen[Алиса создает SG ссылку]
+        SGLinkShare[Передача ссылки через внешний канал]
+        SGLinkAdd[Боб добавляет SG ссылку]
+    end
     
-    Connect{🎯 Попробовать прямое соединение}
+    HomeRouter -.->|Узнать внешний IP| STUNServer
+    OfficeRouter -.->|Узнать внешний IP| STUNServer
     
-    Direct[✅ Прямой P2P чат<br/>Быстро и приватно]
+    Alice --> SGLinkGen
+    SGLinkGen --> SGLinkShare
+    SGLinkShare --> SGLinkAdd
+    SGLinkAdd --> Bob
     
-    Relay[🔄 Через сервер-посредник<br/>Всё равно работает!]
+    HomeRouter <==>|Прямое P2P| OfficeRouter
+    HomeRouter -.->|Резерв| RelayServer
+    RelayServer -.-> OfficeRouter
     
-    Chat([💬 Зашифрованная переписка])
+    classDef user fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef router fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef server fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef manual fill:#FF5722,stroke:#D84315,color:#fff
     
-    Start --> IP
-    IP --> Join
-    Join --> Find
-    Find --> Connect
-    Connect -->|Успех| Direct
-    Connect -->|Заблокировано| Relay
-    Direct --> Chat
-    Relay --> Chat
-    
-    classDef process fill:#4CAF50,stroke:#2E7D32,color:#fff
-    classDef decision fill:#FF9800,stroke:#F57C00,color:#fff
-    classDef result fill:#2196F3,stroke:#1565C0,color:#fff
-    
-    class Start,IP,Join,Find,Chat process
-    class Connect decision
-    class Direct,Relay result
+    class Alice,Bob user
+    class HomeRouter,OfficeRouter router
+    class STUNServer,RelayServer server
+    class SGLinkGen,SGLinkShare,SGLinkAdd manual
 ```
 
 ## 🎯 Поддерживаемые платформы
