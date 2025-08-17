@@ -39,39 +39,51 @@
 ## 🏗️ Project Architecture
 
 ```mermaid
-flowchart TD
-    Start([📱 User opens ShadowGhost])
+graph LR
+    subgraph HomeNetwork [Home Network]
+        Alice[Alice ShadowGhost]
+        HomeRouter[Home Router]
+        Alice --> HomeRouter
+    end
     
-    IP[☁️ Discover my public IP<br/>via STUN server]
+    subgraph OfficeNetwork [Office Network]
+        Bob[Bob ShadowGhost]
+        OfficeRouter[Office Router]
+        Bob --> OfficeRouter
+    end
     
-    Join[🚀 Join P2P network<br/>via Bootstrap node]
+    subgraph InternetServices [Internet Services]
+        STUNServer[STUN Server]
+        RelayServer[TURN Relay]
+    end
     
-    Find[🔍 Find friend's address<br/>in network database]
+    subgraph ManualProcess [Manual Contact Exchange]
+        SGLinkGen[Alice generates SG link]
+        SGLinkShare[Share link via external channel]
+        SGLinkAdd[Bob adds SG link]
+    end
     
-    Connect{🎯 Try direct connection}
+    HomeRouter -.->|Get external IP| STUNServer
+    OfficeRouter -.->|Get external IP| STUNServer
     
-    Direct[✅ Direct P2P chat<br/>Fast & Private]
+    Alice --> SGLinkGen
+    SGLinkGen --> SGLinkShare
+    SGLinkShare --> SGLinkAdd
+    SGLinkAdd --> Bob
     
-    Relay[🔄 Route via relay server<br/>Still works!]
+    HomeRouter <==>|Direct P2P| OfficeRouter
+    HomeRouter -.->|Fallback| RelayServer
+    RelayServer -.-> OfficeRouter
     
-    Chat([💬 Encrypted messaging])
+    classDef user fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef router fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef server fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef manual fill:#FF5722,stroke:#D84315,color:#fff
     
-    Start --> IP
-    IP --> Join
-    Join --> Find
-    Find --> Connect
-    Connect -->|Success| Direct
-    Connect -->|Blocked| Relay
-    Direct --> Chat
-    Relay --> Chat
-    
-    classDef process fill:#4CAF50,stroke:#2E7D32,color:#fff
-    classDef decision fill:#FF9800,stroke:#F57C00,color:#fff
-    classDef result fill:#2196F3,stroke:#1565C0,color:#fff
-    
-    class Start,IP,Join,Find,Chat process
-    class Connect decision
-    class Direct,Relay result
+    class Alice,Bob user
+    class HomeRouter,OfficeRouter router
+    class STUNServer,RelayServer server
+    class SGLinkGen,SGLinkShare,SGLinkAdd manual
 ```
 
 ## 🔒 Security
