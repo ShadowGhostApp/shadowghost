@@ -1,20 +1,54 @@
+use crate::network::{ChatMessage, Contact};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkEvent {
-    ServerStarted { port: u16 },
+    ServerStarted {
+        port: u16,
+    },
     ServerStopped,
-    MessageReceived { from: String, content: String },
-    ContactAdded { name: String },
-    Error { error: String },
-    Debug { message: String },
+    MessageReceived {
+        message: ChatMessage,
+    },
+    ContactAdded {
+        contact: Contact,
+    },
+    Error {
+        error: String,
+        context: Option<String>,
+    },
+    Debug {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageEvent {
-    ContactsSaved { count: usize },
-    Error { error: String, operation: String },
+    ContactsSaved {
+        count: usize,
+    },
+    ContactsLoaded {
+        count: usize,
+    },
+    ChatHistorySaved {
+        chat_id: String,
+        message_count: usize,
+    },
+    ChatHistoryLoaded {
+        chat_id: String,
+        message_count: usize,
+    },
+    CleanupCompleted {
+        removed_items: usize,
+    },
+    BackupCreated {
+        file_path: String,
+    },
+    Error {
+        error: String,
+        operation: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
