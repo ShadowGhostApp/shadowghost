@@ -311,7 +311,7 @@ impl CliInterface {
 
     async fn show_status(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n📊 Current status:");
-        println!("┌─────────────────────┬──────────────────────────────────┐");
+        println!("┌─────────────────────┬─────────────────────────────────┐");
 
         let init_status = if self.core.is_initialized() {
             "✅ Yes"
@@ -346,7 +346,7 @@ impl CliInterface {
             }
         }
 
-        println!("└─────────────────────┴──────────────────────────────────┘");
+        println!("└─────────────────────┴─────────────────────────────────┘");
 
         Ok(())
     }
@@ -360,14 +360,14 @@ impl CliInterface {
         match self.core.get_network_stats().await {
             Ok(stats) => {
                 println!("\n📈 Network statistics:");
-                println!("┌─────────────────────┬──────────────────────┐");
+                println!("┌─────────────────────┬─────────────────────┐");
                 println!("│ Messages sent       │ {:<19} │", stats.messages_sent);
                 println!("│ Messages received   │ {:<19} │", stats.messages_received);
                 println!("│ Bytes sent          │ {:<19} │", stats.bytes_sent);
                 println!("│ Bytes received      │ {:<19} │", stats.bytes_received);
                 println!("│ Total connections   │ {:<19} │", stats.total_connections);
                 println!("│ Active connections  │ {:<19} │", stats.active_connections);
-                println!("└─────────────────────┴──────────────────────┘");
+                println!("└─────────────────────┴─────────────────────┘");
             }
             Err(e) => println!("❌ Error getting statistics: {}", e),
         }
@@ -548,7 +548,28 @@ impl CliInterface {
 
                     match self.core.send_message(contact_name, message).await {
                         Ok(()) => {
-                            println!("✅ Sent");
+                            println!("✅ Sent (checking delivery...)");
+
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                            if let Ok(messages) = self.core.get_chat_messages(contact_name).await {
+                                if let Some(last_msg) = messages.last() {
+                                    match last_msg.delivery_status {
+                                        crate::network::DeliveryStatus::Delivered => {
+                                            println!("📨 Message delivered");
+                                        }
+                                        crate::network::DeliveryStatus::Failed => {
+                                            println!("❌ Message failed to deliver");
+                                        }
+                                        crate::network::DeliveryStatus::Pending => {
+                                            println!("⏳ Message pending...");
+                                        }
+                                        crate::network::DeliveryStatus::Sent => {
+                                            println!("📤 Message sent, waiting for confirmation");
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Err(e) => match e {
                             crate::core::CoreError::InvalidState(msg)
@@ -596,7 +617,7 @@ impl CliInterface {
                             .unwrap_or_else(|| "??:??:??".to_string());
 
                         let status_indicator = match msg.delivery_status {
-                            crate::DeliveryStatus::Pending => "⏳",
+                            crate::network::DeliveryStatus::Pending => "⏳",
                             crate::network::DeliveryStatus::Sent => "📤",
                             crate::network::DeliveryStatus::Delivered => "✅",
                             crate::network::DeliveryStatus::Failed => "❌",
@@ -624,18 +645,18 @@ impl CliInterface {
 
     async fn handle_ping_command(&self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("Error: System not initialized. Execute 'init' first.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if args.is_empty() {
-            println!("Usage: ping <contact-name>");
+            println!("💡 Usage: ping <contact-name>");
             return Ok(());
         }
 
         let contact_name = args.trim();
 
-        print!("Pinging {}...", contact_name);
+        print!("📡 Pinging {}...", contact_name);
         io::stdout().flush()?;
 
         match self.core.get_contacts().await {
@@ -646,16 +667,16 @@ impl CliInterface {
                     let elapsed = start.elapsed();
 
                     if is_online {
-                        println!(" {} is online ({}ms)", contact_name, elapsed.as_millis());
+                        println!(" ✅ {} is online ({}ms)", contact_name, elapsed.as_millis());
                     } else {
-                        println!(" {} is offline or unavailable", contact_name);
+                        println!(" ❌ {} is offline or unavailable", contact_name);
                         println!("  (Check if they started their server with 'start' command)");
                     }
                 } else {
-                    println!(" Contact '{}' not found", contact_name);
+                    println!(" ❌ Contact '{}' not found", contact_name);
                 }
             }
-            Err(e) => println!(" Error getting contacts: {}", e),
+            Err(e) => println!(" ❌ Error getting contacts: {}", e),
         }
 
         Ok(())
