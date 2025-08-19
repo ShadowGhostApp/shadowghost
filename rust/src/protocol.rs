@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MessageType {
     Handshake,
     TextMessage,
@@ -12,9 +12,10 @@ pub enum MessageType {
     Disconnect,
     FileShare,
     VoiceCall,
+    MessageAcknowledgment,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProtocolHeader {
     pub version: u8,
     pub message_type: MessageType,
@@ -24,7 +25,7 @@ pub struct ProtocolHeader {
     pub sequence_number: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HandshakeMessage {
     pub peer_id: String,
     pub peer_name: String,
@@ -33,14 +34,14 @@ pub struct HandshakeMessage {
     pub protocol_version: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TextMessage {
     pub content: String,
     pub message_id: String,
     pub reply_to: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileMessage {
     pub file_name: String,
     pub file_size: u64,
@@ -50,24 +51,30 @@ pub struct FileMessage {
     pub total_chunks: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StatusMessage {
     pub status: String,
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PingMessage {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PongMessage {
     pub original_timestamp: u64,
     pub response_timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageAcknowledgmentMessage {
+    pub original_message_id: String,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MessagePayload {
     Handshake(HandshakeMessage),
     Text(TextMessage),
@@ -76,6 +83,7 @@ pub enum MessagePayload {
     Ping(PingMessage),
     Pong(PongMessage),
     KeyExchange(Vec<u8>),
+    MessageAcknowledgment(MessageAcknowledgmentMessage),
     Disconnect,
 }
 
@@ -186,6 +194,27 @@ impl ProtocolMessage {
             MessagePayload::Pong(PongMessage {
                 original_timestamp,
                 response_timestamp,
+            }),
+        )
+    }
+
+    pub fn create_message_acknowledgment(
+        sender_id: String,
+        recipient_id: String,
+        original_message_id: String,
+    ) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Self::new(
+            MessageType::MessageAcknowledgment,
+            sender_id,
+            recipient_id,
+            MessagePayload::MessageAcknowledgment(MessageAcknowledgmentMessage {
+                original_message_id,
+                timestamp,
             }),
         )
     }

@@ -596,6 +596,7 @@ impl CliInterface {
                             .unwrap_or_else(|| "??:??:??".to_string());
 
                         let status_indicator = match msg.delivery_status {
+                            crate::DeliveryStatus::Pending => "⏳",
                             crate::network::DeliveryStatus::Sent => "📤",
                             crate::network::DeliveryStatus::Delivered => "✅",
                             crate::network::DeliveryStatus::Failed => "❌",
@@ -623,53 +624,38 @@ impl CliInterface {
 
     async fn handle_ping_command(&self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Error: System not initialized. Execute 'init' first.");
+            println!("Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if args.is_empty() {
-            println!("💡 Usage: ping <contact-name>");
+            println!("Usage: ping <contact-name>");
             return Ok(());
         }
 
         let contact_name = args.trim();
 
-        print!("🔍 Pinging {}...", contact_name);
+        print!("Pinging {}...", contact_name);
         io::stdout().flush()?;
 
         match self.core.get_contacts().await {
             Ok(contacts) => {
-                if let Some(contact) = contacts.iter().find(|c| c.name == contact_name) {
-                    use std::time::Duration;
-                    use tokio::net::TcpStream;
-
+                if let Some(_contact) = contacts.iter().find(|c| c.name == contact_name) {
                     let start = std::time::Instant::now();
-                    let result = tokio::time::timeout(
-                        Duration::from_secs(3),
-                        TcpStream::connect(&contact.address),
-                    )
-                    .await;
+                    let is_online = self.core.check_contact_online(contact_name).await;
+                    let elapsed = start.elapsed();
 
-                    match result {
-                        Ok(Ok(_)) => {
-                            let elapsed = start.elapsed();
-                            println!(" ✅ {} is online ({}ms)", contact_name, elapsed.as_millis());
-                        }
-                        Ok(Err(_)) => {
-                            println!(" ❌ {} unavailable", contact_name);
-                            println!(
-                                "  💡 (Check if they started their server with 'start' command)"
-                            );
-                        }
-                        Err(_) => {
-                            println!(" ⏰ {} connection timeout", contact_name);
-                        }
+                    if is_online {
+                        println!(" {} is online ({}ms)", contact_name, elapsed.as_millis());
+                    } else {
+                        println!(" {} is offline or unavailable", contact_name);
+                        println!("  (Check if they started their server with 'start' command)");
                     }
                 } else {
-                    println!(" ❌ Contact '{}' not found", contact_name);
+                    println!(" Contact '{}' not found", contact_name);
                 }
             }
-            Err(e) => println!(" ❌ Error getting contacts: {}", e),
+            Err(e) => println!(" Error getting contacts: {}", e),
         }
 
         Ok(())

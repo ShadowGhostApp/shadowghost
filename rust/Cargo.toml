@@ -3,13 +3,18 @@ name = "shadowghost"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "shadowghost"
+path = "src/lib.rs"
+
 [[bin]]
 name = "shadowghost"
 path = "src/bin/main.rs"
 
-[lib]
-name = "shadowghost"
-path = "src/lib.rs"
+[[bench]]
+name = "benchmarks"
+path = "bench/benchmarks.rs"
+harness = false
 
 [dependencies]
 # Async runtime
@@ -46,5 +51,8 @@ chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 
 [dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
 tokio-test = "0.4"
-tempfile = "3.20.0"
+tempfile = "3.8"
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.9.2"

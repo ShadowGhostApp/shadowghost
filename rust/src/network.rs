@@ -10,28 +10,29 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, RwLock};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatMessageType {
     Text,
     File,
     System,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContactStatus {
     Online,
     Offline,
     Blocked,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DeliveryStatus {
+    Pending,
     Sent,
     Delivered,
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TrustLevel {
     Unknown,
     Low,
@@ -86,6 +87,7 @@ pub struct NetworkMessage {
     pub recipient_id: String,
     pub content: Vec<u8>,
     pub timestamp: u64,
+    pub message_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -99,6 +101,7 @@ pub struct NetworkManager {
     shutdown_signal: Arc<Notify>,
     is_running: Arc<AtomicBool>,
     server_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    pending_acknowledgments: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl NetworkManager {
@@ -115,6 +118,7 @@ impl NetworkManager {
             shutdown_signal: Arc::new(Notify::new()),
             is_running: Arc::new(AtomicBool::new(false)),
             server_handle: Arc::new(RwLock::new(None)),
+            pending_acknowledgments: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -176,15 +180,11 @@ impl NetworkManager {
         let is_running = self.is_running.clone();
 
         let handle = tokio::spawn(async move {
-            println!("🚀 Server started on port {}", port);
-
             loop {
                 tokio::select! {
                     accept_result = listener.accept() => {
                         match accept_result {
-                            Ok((stream, addr)) => {
-                                println!("📞 New connection from {}", addr);
-
+                            Ok((stream, _addr)) => {
                                 let manager_clone = manager.clone();
                                 let contacts_clone = contacts_ref.clone();
 
@@ -199,21 +199,18 @@ impl NetworkManager {
                                     }
                                 });
                             }
-                            Err(e) => {
-                                eprintln!("❌ Error accepting connection: {}", e);
+                            Err(_e) => {
                                 break;
                             }
                         }
                     }
                     _ = shutdown_signal.notified() => {
-                        println!("🛑 Received server shutdown signal");
                         break;
                     }
                 }
             }
 
             is_running.store(false, Ordering::Relaxed);
-            println!("✅ Server stopped");
         });
 
         {
@@ -226,11 +223,8 @@ impl NetworkManager {
 
     pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_running.load(Ordering::Relaxed) {
-            println!("⚠️ Server already stopped");
             return Ok(());
         }
-
-        println!("🛑 Stopping server...");
 
         self.shutdown_signal.notify_one();
 
@@ -240,9 +234,7 @@ impl NetworkManager {
         };
 
         if let Some(handle) = handle {
-            if let Err(e) = handle.await {
-                eprintln!("❌ Error stopping server: {}", e);
-            }
+            let _ = handle.await;
         }
 
         self.is_running.store(false, Ordering::Relaxed);
@@ -253,7 +245,6 @@ impl NetworkManager {
                 context: Some("Shutdown".to_string()),
             });
 
-        println!("✅ Server shutdown complete");
         Ok(())
     }
 
@@ -270,7 +261,6 @@ impl NetworkManager {
             Ok(Ok(n)) if n > 0 => {
                 if let Ok(message) = serde_json::from_slice::<NetworkMessage>(&buffer[..n]) {
                     if self.is_peer_blocked(&message.sender_id).await {
-                        println!("🚫 Message from blocked user: {}", message.sender_id);
                         return Ok(());
                     }
 
@@ -282,6 +272,8 @@ impl NetworkManager {
                         self.chats.clone(),
                         self.crypto.clone(),
                         self.event_bus.clone(),
+                        self.pending_acknowledgments.clone(),
+                        stream,
                     )
                     .await?;
 
@@ -290,15 +282,9 @@ impl NetworkManager {
                     stats.bytes_received += n as u64;
                 }
             }
-            Ok(Ok(_)) => {
-                println!("⚠️ Received empty message");
-            }
-            Ok(Err(e)) => {
-                println!("❌ Read error: {}", e);
-            }
-            Err(_) => {
-                println!("⏰ Timeout reading message");
-            }
+            Ok(Ok(_)) => {}
+            Ok(Err(_e)) => {}
+            Err(_) => {}
         }
 
         Ok(())
@@ -316,6 +302,8 @@ impl NetworkManager {
         chats: Arc<RwLock<HashMap<String, Vec<ChatMessage>>>>,
         _crypto: Arc<RwLock<CryptoManager>>,
         event_bus: EventBus,
+        pending_acknowledgments: Arc<RwLock<HashMap<String, String>>>,
+        mut stream: TcpStream,
     ) -> Result<(), Box<dyn std::error::Error>> {
         match message.message_type {
             MessageType::TextMessage => {
@@ -328,7 +316,10 @@ impl NetworkManager {
 
                 let content = String::from_utf8_lossy(&message.content);
                 let chat_message = ChatMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: message
+                        .message_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     from: sender_name.clone(),
                     to: peer.name.clone(),
                     content: content.to_string(),
@@ -351,11 +342,58 @@ impl NetworkManager {
                         .push(chat_message.clone());
                 }
 
-                println!("💬 Received message from {}: {}", sender_name, content);
+                if let Some(msg_id) = &message.message_id {
+                    let acknowledgment_message = NetworkMessage {
+                        message_type: MessageType::MessageAcknowledgment,
+                        sender_id: peer.id.clone(),
+                        recipient_id: message.sender_id.clone(),
+                        content: msg_id.as_bytes().to_vec(),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        message_id: None,
+                    };
+
+                    let _ = Self::send_acknowledgment_through_stream(
+                        &mut stream,
+                        &acknowledgment_message,
+                    )
+                    .await;
+                }
 
                 event_bus.emit_network(crate::events::NetworkEvent::MessageReceived {
                     message: chat_message,
                 });
+            }
+            MessageType::MessageAcknowledgment => {
+                let msg_id = String::from_utf8_lossy(&message.content).to_string();
+                {
+                    let mut pending = pending_acknowledgments.write().await;
+                    if let Some(chat_key) = pending.remove(&msg_id) {
+                        let mut chats_guard = chats.write().await;
+                        if let Some(messages) = chats_guard.get_mut(&chat_key) {
+                            if let Some(msg) = messages.iter_mut().find(|m| m.id == msg_id) {
+                                msg.delivery_status = DeliveryStatus::Delivered;
+                            }
+                        }
+                    }
+                }
+            }
+            MessageType::Ping => {
+                let pong_message = NetworkMessage {
+                    message_type: MessageType::Pong,
+                    sender_id: peer.id.clone(),
+                    recipient_id: message.sender_id.clone(),
+                    content: message.content.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    message_id: None,
+                };
+
+                let _ = Self::send_acknowledgment_through_stream(&mut stream, &pong_message).await;
             }
             MessageType::Handshake => {
                 let contact_data: PeerData = serde_json::from_slice(&message.content)?;
@@ -375,18 +413,22 @@ impl NetworkManager {
                     contacts_guard.insert(contact_data.id, contact.clone());
                 }
 
-                println!("🤝 Added new contact: {}", contact_data.name);
-
                 event_bus.emit_network(crate::events::NetworkEvent::ContactAdded { contact });
             }
-            _ => {
-                println!(
-                    "❓ Received unknown message type: {:?}",
-                    message.message_type
-                );
-            }
+            _ => {}
         }
 
+        Ok(())
+    }
+
+    async fn send_acknowledgment_through_stream(
+        stream: &mut TcpStream,
+        message: &NetworkMessage,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use tokio::io::AsyncWriteExt;
+        let data = serde_json::to_vec(message)?;
+        stream.write_all(&data).await?;
+        stream.flush().await?;
         Ok(())
     }
 
@@ -396,6 +438,8 @@ impl NetworkManager {
         content: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let peer = self.peer.read().await;
+        let message_id = uuid::Uuid::new_v4().to_string();
+
         let message = NetworkMessage {
             message_type: MessageType::TextMessage,
             sender_id: peer.id.clone(),
@@ -404,16 +448,17 @@ impl NetworkManager {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
+            message_id: Some(message_id.clone()),
         };
 
         let mut chat_message = ChatMessage {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: message_id.clone(),
             from: peer.name.clone(),
             to: contact.name.clone(),
             content: content.to_string(),
             msg_type: ChatMessageType::Text,
             timestamp: message.timestamp,
-            delivery_status: DeliveryStatus::Sent,
+            delivery_status: DeliveryStatus::Pending,
         };
 
         let chat_key = if peer.name < contact.name {
@@ -422,20 +467,45 @@ impl NetworkManager {
             format!("{}_{}", contact.name, peer.name)
         };
 
-        println!("📤 Sending message to {}: {}", contact.name, content);
-
-        match Self::send_message_to_address(&contact.address, &message).await {
-            Ok(_) => {
+        match Self::send_message_to_address_with_acknowledgment(&contact.address, &message).await {
+            Ok(true) => {
                 chat_message.delivery_status = DeliveryStatus::Delivered;
-                println!("✅ Message delivered to {}", contact.name);
 
                 let mut stats = self.stats.write().await;
                 stats.messages_sent += 1;
                 stats.bytes_sent += content.len() as u64;
             }
+            Ok(false) => {
+                chat_message.delivery_status = DeliveryStatus::Sent;
+
+                {
+                    let mut pending = self.pending_acknowledgments.write().await;
+                    pending.insert(message_id.clone(), chat_key.clone());
+                }
+
+                tokio::spawn({
+                    let pending_acknowledgments = self.pending_acknowledgments.clone();
+                    let chats = self.chats.clone();
+                    let msg_id = message_id.clone();
+                    let chat_key_clone = chat_key.clone();
+
+                    async move {
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+
+                        let mut pending = pending_acknowledgments.write().await;
+                        if pending.remove(&msg_id).is_some() {
+                            let mut chats_guard = chats.write().await;
+                            if let Some(messages) = chats_guard.get_mut(&chat_key_clone) {
+                                if let Some(msg) = messages.iter_mut().find(|m| m.id == msg_id) {
+                                    msg.delivery_status = DeliveryStatus::Failed;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
             Err(e) => {
                 chat_message.delivery_status = DeliveryStatus::Failed;
-                println!("❌ Send error to {}: {}", contact.name, e);
 
                 let error_msg = if e.to_string().contains("Connection refused")
                     || e.to_string().contains("10061")
@@ -471,11 +541,11 @@ impl NetworkManager {
         Ok(())
     }
 
-    async fn send_message_to_address(
+    async fn send_message_to_address_with_acknowledgment(
         address: &str,
         message: &NetworkMessage,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use tokio::io::AsyncWriteExt;
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let stream_result =
             tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await;
@@ -500,10 +570,53 @@ impl NetworkManager {
         match tokio::time::timeout(Duration::from_secs(3), stream.write_all(&data)).await {
             Ok(Ok(_)) => {
                 let _ = stream.flush().await;
-                Ok(())
+
+                if message.message_id.is_some() {
+                    let mut buffer = [0; 1024];
+                    match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+                        .await
+                    {
+                        Ok(Ok(n)) if n > 0 => {
+                            if let Ok(acknowledgment_msg) =
+                                serde_json::from_slice::<NetworkMessage>(&buffer[..n])
+                            {
+                                if acknowledgment_msg.message_type
+                                    == MessageType::MessageAcknowledgment
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    return Ok(false);
+                }
+
+                Ok(true)
             }
             Ok(Err(e)) => Err(format!("Data send error: {}", e).into()),
             Err(_) => Err("Write timeout".into()),
+        }
+    }
+
+    pub async fn check_contact_online(&self, contact: &Contact) -> bool {
+        let ping_message = NetworkMessage {
+            message_type: MessageType::Ping,
+            sender_id: "ping".to_string(),
+            recipient_id: contact.id.clone(),
+            content: vec![],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            message_id: None,
+        };
+
+        match Self::send_message_to_address_with_acknowledgment(&contact.address, &ping_message)
+            .await
+        {
+            Ok(_) => true,
+            Err(_) => false,
         }
     }
 
@@ -516,14 +629,12 @@ impl NetworkManager {
     pub async fn block_peer(&self, peer_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut blocked = self.blocked_peers.write().await;
         blocked.insert(peer_id.to_string(), true);
-        println!("🚫 User {} blocked", peer_id);
         Ok(())
     }
 
     pub async fn unblock_peer(&self, peer_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut blocked = self.blocked_peers.write().await;
         blocked.remove(peer_id);
-        println!("✅ User {} unblocked", peer_id);
         Ok(())
     }
 
@@ -533,11 +644,7 @@ impl NetworkManager {
     }
 
     pub async fn check_contact_availability(&self, contact: &Contact) -> bool {
-        let stream_result =
-            tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(&contact.address))
-                .await;
-
-        matches!(stream_result, Ok(Ok(_)))
+        self.check_contact_online(contact).await
     }
 
     pub async fn restart_server(
@@ -545,8 +652,6 @@ impl NetworkManager {
         port: u16,
         contacts: Arc<RwLock<HashMap<String, Contact>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("🔄 Restarting server...");
-
         if self.is_running() {
             self.shutdown().await?;
             tokio::time::sleep(Duration::from_secs(1)).await;

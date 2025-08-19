@@ -1,3 +1,5 @@
+pub mod events;
+
 use shadowghost::prelude::*;
 use std::sync::Once;
 
@@ -29,6 +31,10 @@ impl TestSetup {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         Ok(Self { core, test_id })
+    }
+
+    pub fn get_event_receiver(&self) -> tokio::sync::broadcast::Receiver<AppEvent> {
+        self.core.get_event_bus().subscribe()
     }
 
     pub async fn shutdown(mut self) -> Result<(), Box<dyn std::error::Error>> {
