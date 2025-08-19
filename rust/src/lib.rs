@@ -1,4 +1,3 @@
-pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod contact_manager;
@@ -13,7 +12,6 @@ pub mod storage;
 pub mod tls_masking;
 pub mod utils;
 
-pub use bridge::*;
 pub use config::{AppConfig, ConfigManager};
 pub use contact_manager::{ContactError, ContactManager};
 pub use core::{CoreError, ShadowGhostCore};
@@ -28,14 +26,11 @@ pub use storage::{StorageManager, StorageStats};
 
 pub mod prelude {
     pub use crate::{
-        AppConfig, AppEvent, ChatMessage, ChatMessageType, ConfigManager, Contact, ContactError,
-        ContactManager, ContactStatus, CoreError, CryptoEvent, CryptoManager, DeliveryStatus,
-        EventBus, NetworkEvent, NetworkManager, Peer, PublicKey, ShadowGhostCore, StorageEvent,
-        StorageManager, StorageStats, TrustLevel,
+        AppConfig, AppEvent, ChatMessage, ConfigManager, Contact, ContactError, ContactManager,
+        ContactStatus, CoreError, CryptoEvent, CryptoManager, EventBus, NetworkEvent,
+        NetworkManager, Peer, PublicKey, ShadowGhostCore, StorageEvent, StorageManager,
+        StorageStats,
     };
-
-    pub use chrono;
-    pub use uuid;
 }
 
 flutter_rust_bridge::frb_generated_boilerplate!();

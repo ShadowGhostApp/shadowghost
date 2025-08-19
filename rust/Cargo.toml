@@ -1,7 +1,20 @@
 [package]
-name = "rust"
+name = "shadowghost"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[lib]
+name = "shadowghost"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shadowghost"
+path = "src/bin/main.rs"
+
+[[bench]]
+name = "benchmarks"
+path = "bench/benchmarks.rs"
+harness = false
 
 
 [lib]
