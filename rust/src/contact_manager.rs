@@ -175,9 +175,15 @@ impl ContactManager {
 
                 {
                     let mut contacts = self.contacts.write().await;
-                    if contacts.contains_key(&peer_data.id) {
-                        // Contact already exists, update it
+
+                    let existing_contact = contacts.values().find(|c| c.name == peer_data.name);
+                    if let Some(existing) = existing_contact {
+                        if existing.id != peer_data.id {
+                            contacts.retain(|_, c| c.name != peer_data.name);
+                            println!("Updated contact {} with new address", peer_data.name);
+                        }
                     }
+
                     contacts.insert(peer_data.id.clone(), contact.clone());
                 }
 
@@ -236,12 +242,28 @@ impl ContactManager {
 
     pub async fn get_contacts(&self) -> Vec<Contact> {
         let contacts = self.contacts.read().await;
-        contacts.values().cloned().collect()
+        let mut unique_contacts: HashMap<String, Contact> = HashMap::new();
+
+        for contact in contacts.values() {
+            if let Some(existing) = unique_contacts.get(&contact.name) {
+                if contact.last_seen > existing.last_seen {
+                    unique_contacts.insert(contact.name.clone(), contact.clone());
+                }
+            } else {
+                unique_contacts.insert(contact.name.clone(), contact.clone());
+            }
+        }
+
+        unique_contacts.into_values().collect()
     }
 
     pub async fn get_contact_by_name(&self, name: &str) -> Option<Contact> {
         let contacts = self.contacts.read().await;
-        contacts.values().find(|c| c.name == name).cloned()
+        contacts
+            .values()
+            .filter(|c| c.name == name)
+            .max_by_key(|c| c.last_seen)
+            .cloned()
     }
 
     pub async fn get_contact_by_id(&self, id: &str) -> Option<Contact> {
@@ -251,13 +273,32 @@ impl ContactManager {
 
     pub async fn check_contact_online(&self, contact_name: &str) -> bool {
         if let Some(contact) = self.get_contact_by_name(contact_name).await {
-            self.ping_contact(&contact).await
+            self.ping_contact_advanced(&contact).await
         } else {
             false
         }
     }
 
-    async fn ping_contact(&self, contact: &Contact) -> bool {
+    async fn ping_contact_advanced(&self, contact: &Contact) -> bool {
+        let standard_ports = vec![443, 80, 8080, 8443];
+
+        if let Ok((host, original_port)) = self.parse_address(&contact.address) {
+            let mut ports_to_try = vec![original_port];
+            ports_to_try.extend(standard_ports);
+            ports_to_try.dedup();
+
+            for port in ports_to_try {
+                let test_address = format!("{}:{}", host, port);
+                if self.ping_contact_on_address(&test_address, contact).await {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    async fn ping_contact_on_address(&self, address: &str, contact: &Contact) -> bool {
         let ping_message = PingMessage {
             message_type: MessageType::Ping,
             sender_id: self.local_peer.id.clone(),
@@ -271,11 +312,22 @@ impl ContactManager {
         };
 
         match self
-            .send_ping_and_wait_for_pong(&contact.address, &ping_message)
+            .send_ping_and_wait_for_pong(address, &ping_message)
             .await
         {
             Ok(_) => true,
             Err(_) => false,
+        }
+    }
+
+    fn parse_address(&self, address: &str) -> Result<(String, u16), Box<dyn std::error::Error>> {
+        if let Some(colon_pos) = address.rfind(':') {
+            let host = &address[..colon_pos];
+            let port_str = &address[colon_pos + 1..];
+            let port: u16 = port_str.parse()?;
+            Ok((host.to_string(), port))
+        } else {
+            Err("Address must contain port".into())
         }
     }
 
@@ -285,7 +337,7 @@ impl ContactManager {
         ping_message: &PingMessage,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let stream_result =
-            tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(address)).await;
+            tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await;
 
         let mut stream = match stream_result {
             Ok(Ok(s)) => s,
@@ -295,12 +347,12 @@ impl ContactManager {
 
         let data = serde_json::to_vec(ping_message)?;
 
-        match tokio::time::timeout(Duration::from_secs(2), stream.write_all(&data)).await {
+        match tokio::time::timeout(Duration::from_secs(3), stream.write_all(&data)).await {
             Ok(Ok(_)) => {
                 let _ = stream.flush().await;
 
                 let mut buffer = [0; 1024];
-                match tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+                match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
                         if let Ok(response) = serde_json::from_slice::<PingMessage>(&buffer[..n]) {
                             if response.message_type == MessageType::Pong {
