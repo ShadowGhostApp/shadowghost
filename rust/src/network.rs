@@ -184,7 +184,8 @@ impl NetworkManager {
                 tokio::select! {
                     accept_result = listener.accept() => {
                         match accept_result {
-                            Ok((stream, _addr)) => {
+                            Ok((stream, addr)) => {
+                                println!("New connection from: {}", addr);
                                 let manager_clone = manager.clone();
                                 let contacts_clone = contacts_ref.clone();
 
@@ -199,18 +200,21 @@ impl NetworkManager {
                                     }
                                 });
                             }
-                            Err(_e) => {
-                                break;
+                            Err(e) => {
+                                println!("Accept error: {}", e);
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                             }
                         }
                     }
                     _ = shutdown_signal.notified() => {
+                        println!("Server shutdown signal received");
                         break;
                     }
                 }
             }
 
             is_running.store(false, Ordering::Relaxed);
+            println!("Server loop ended");
         });
 
         {
@@ -226,6 +230,7 @@ impl NetworkManager {
             return Ok(());
         }
 
+        println!("Initiating network manager shutdown...");
         self.shutdown_signal.notify_one();
 
         let handle = {
@@ -234,16 +239,14 @@ impl NetworkManager {
         };
 
         if let Some(handle) = handle {
-            let _ = handle.await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
         }
 
         self.is_running.store(false, Ordering::Relaxed);
+        println!("Network manager shutdown completed");
 
         self.event_bus
-            .emit_network(crate::events::NetworkEvent::Error {
-                error: "Server shutdown completed".to_string(),
-                context: Some("Shutdown".to_string()),
-            });
+            .emit_network(crate::events::NetworkEvent::ServerStopped);
 
         Ok(())
     }
@@ -257,34 +260,45 @@ impl NetworkManager {
 
         let mut buffer = [0; 4096];
 
-        match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n > 0 => {
-                if let Ok(message) = serde_json::from_slice::<NetworkMessage>(&buffer[..n]) {
-                    if self.is_peer_blocked(&message.sender_id).await {
-                        return Ok(());
+        match tokio::time::timeout(Duration::from_secs(15), stream.read(&mut buffer)).await {
+            Ok(Ok(n)) => {
+                if n > 0 {
+                    if let Ok(message) = serde_json::from_slice::<NetworkMessage>(&buffer[..n]) {
+                        if self.is_peer_blocked(&message.sender_id).await {
+                            println!("Blocked message from: {}", message.sender_id);
+                            return Ok(());
+                        }
+
+                        let peer = self.peer.read().await;
+                        Self::process_message(
+                            &message,
+                            &peer,
+                            contacts,
+                            self.chats.clone(),
+                            self.crypto.clone(),
+                            self.event_bus.clone(),
+                            self.pending_acknowledgments.clone(),
+                            stream,
+                        )
+                        .await?;
+
+                        let mut stats = self.stats.write().await;
+                        stats.messages_received += 1;
+                        stats.bytes_received += n as u64;
+                    } else {
+                        println!("Failed to parse message from stream");
                     }
-
-                    let peer = self.peer.read().await;
-                    Self::process_message(
-                        &message,
-                        &peer,
-                        contacts,
-                        self.chats.clone(),
-                        self.crypto.clone(),
-                        self.event_bus.clone(),
-                        self.pending_acknowledgments.clone(),
-                        stream,
-                    )
-                    .await?;
-
-                    let mut stats = self.stats.write().await;
-                    stats.messages_received += 1;
-                    stats.bytes_received += n as u64;
+                }
+                if n == 0 {
+                    println!("Connection closed by peer");
                 }
             }
-            Ok(Ok(_)) => {}
-            Ok(Err(_e)) => {}
-            Err(_) => {}
+            Ok(Err(e)) => {
+                println!("Stream read error: {}", e);
+            }
+            Err(_) => {
+                println!("Connection timeout during read");
+            }
         }
 
         Ok(())
@@ -375,6 +389,7 @@ impl NetworkManager {
                         if let Some(messages) = chats_guard.get_mut(&chat_key) {
                             if let Some(msg) = messages.iter_mut().find(|m| m.id == msg_id) {
                                 msg.delivery_status = DeliveryStatus::Delivered;
+                                println!("Message {} marked as delivered", msg_id);
                             }
                         }
                     }
@@ -415,7 +430,9 @@ impl NetworkManager {
 
                 event_bus.emit_network(crate::events::NetworkEvent::ContactAdded { contact });
             }
-            _ => {}
+            _ => {
+                println!("Unhandled message type: {:?}", message.message_type);
+            }
         }
 
         Ok(())
@@ -427,9 +444,15 @@ impl NetworkManager {
     ) -> Result<(), Box<dyn std::error::Error>> {
         use tokio::io::AsyncWriteExt;
         let data = serde_json::to_vec(message)?;
-        stream.write_all(&data).await?;
-        stream.flush().await?;
-        Ok(())
+
+        match tokio::time::timeout(Duration::from_secs(5), stream.write_all(&data)).await {
+            Ok(Ok(_)) => {
+                let _ = stream.flush().await;
+                Ok(())
+            }
+            Ok(Err(e)) => Err(format!("Write error: {}", e).into()),
+            Err(_) => Err("Write timeout".into()),
+        }
     }
 
     pub async fn send_chat_message(
@@ -467,7 +490,7 @@ impl NetworkManager {
             format!("{}_{}", contact.name, peer.name)
         };
 
-        match Self::send_message_to_address_with_acknowledgment(&contact.address, &message).await {
+        match Self::send_message_with_multiple_attempts(&contact.address, &message).await {
             Ok(true) => {
                 chat_message.delivery_status = DeliveryStatus::Delivered;
 
@@ -498,6 +521,7 @@ impl NetworkManager {
                             if let Some(messages) = chats_guard.get_mut(&chat_key_clone) {
                                 if let Some(msg) = messages.iter_mut().find(|m| m.id == msg_id) {
                                     msg.delivery_status = DeliveryStatus::Failed;
+                                    println!("Message {} marked as failed after timeout", msg_id);
                                 }
                             }
                         }
@@ -541,6 +565,48 @@ impl NetworkManager {
         Ok(())
     }
 
+    async fn send_message_with_multiple_attempts(
+        address: &str,
+        message: &NetworkMessage,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        if let Ok((host, original_port)) = Self::parse_address(address) {
+            let ports_to_try = vec![original_port, 443, 80, 8080, 8443, 8000, 9000, 3000];
+
+            for port in ports_to_try {
+                let test_address = format!("{}:{}", host, port);
+                println!("Trying to connect to: {}", test_address);
+
+                match Self::send_message_to_address_with_acknowledgment(&test_address, message)
+                    .await
+                {
+                    Ok(result) => {
+                        println!("Successfully connected to {}", test_address);
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        println!("Failed to connect to {}: {}", test_address, e);
+                        continue;
+                    }
+                }
+            }
+
+            Err("All connection attempts failed".into())
+        } else {
+            Self::send_message_to_address_with_acknowledgment(address, message).await
+        }
+    }
+
+    fn parse_address(address: &str) -> Result<(String, u16), Box<dyn std::error::Error>> {
+        if let Some(colon_pos) = address.rfind(':') {
+            let host = &address[..colon_pos];
+            let port_str = &address[colon_pos + 1..];
+            let port: u16 = port_str.parse()?;
+            Ok((host.to_string(), port))
+        } else {
+            Err("Address must contain port".into())
+        }
+    }
+
     async fn send_message_to_address_with_acknowledgment(
         address: &str,
         message: &NetworkMessage,
@@ -548,7 +614,7 @@ impl NetworkManager {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let stream_result =
-            tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await;
+            tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(address)).await;
 
         let mut stream = match stream_result {
             Ok(Ok(s)) => s,
@@ -567,13 +633,13 @@ impl NetworkManager {
 
         let data = serde_json::to_vec(message)?;
 
-        match tokio::time::timeout(Duration::from_secs(3), stream.write_all(&data)).await {
+        match tokio::time::timeout(Duration::from_secs(5), stream.write_all(&data)).await {
             Ok(Ok(_)) => {
                 let _ = stream.flush().await;
 
                 if message.message_id.is_some() {
                     let mut buffer = [0; 1024];
-                    match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+                    match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer))
                         .await
                     {
                         Ok(Ok(n)) if n > 0 => {
@@ -612,9 +678,7 @@ impl NetworkManager {
             message_id: None,
         };
 
-        match Self::send_message_to_address_with_acknowledgment(&contact.address, &ping_message)
-            .await
-        {
+        match Self::send_message_with_multiple_attempts(&contact.address, &ping_message).await {
             Ok(_) => true,
             Err(_) => false,
         }
