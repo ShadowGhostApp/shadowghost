@@ -211,6 +211,16 @@ impl ShadowGhostCore {
             return Ok(test_port);
         }
 
+        let standard_ports = vec![443, 80, 8080, 8443, 8000, 9000, 3000];
+
+        for port in standard_ports.iter() {
+            if self.is_port_available(*port).await {
+                println!("Using standard port: {}", port);
+                self.save_port(*port).await?;
+                return Ok(*port);
+            }
+        }
+
         if config.network.use_fixed_port {
             let desired_port = config.network.default_port;
             if self.is_port_available(desired_port).await {
@@ -231,10 +241,6 @@ impl ShadowGhostCore {
                         return Ok(alt_port);
                     }
                 }
-                return Err(CoreError::Network(format!(
-                    "No available ports near {}",
-                    desired_port
-                )));
             }
         }
 
@@ -499,6 +505,7 @@ impl ShadowGhostCore {
         if let Some(ip) = *external_ip {
             println!("External connections available at: {}:{}", ip, port);
         }
+        println!("Also trying to bind to standard ports for better connectivity...");
 
         tokio::spawn(async move {
             if let Err(e) = nm_clone.start_server(port, cm_clone).await {
@@ -776,14 +783,14 @@ impl ShadowGhostCore {
 
         if let Some(nm) = &self.network_manager {
             if nm.is_running() {
-                format!("Running on port {}", self.allocated_port.unwrap_or(0))
+                format!("🟢 Running on port {}", self.allocated_port.unwrap_or(0))
             } else if self.server_started {
-                "Starting...".to_string()
+                "🟡 Starting...".to_string()
             } else {
-                "Stopped".to_string()
+                "🔴 Stopped".to_string()
             }
         } else {
-            "Network manager error".to_string()
+            "❌ Network manager error".to_string()
         }
     }
 
@@ -846,9 +853,15 @@ impl ShadowGhostCore {
             let external_ip = self.external_ip.read().await;
 
             let info = if let Some(ip) = *external_ip {
-                format!("External: {}:{}\nLocal: 127.0.0.1:{}", ip, port, port)
+                format!(
+                    "External: {}:{}\nLocal: 127.0.0.1:{}\nFallback ports: 443, 80, 8080, 8443",
+                    ip, port, port
+                )
             } else {
-                format!("Local only: 127.0.0.1:{}", port)
+                format!(
+                    "Local only: 127.0.0.1:{}\nFallback ports: 443, 80, 8080, 8443",
+                    port
+                )
             };
 
             Ok(info)
