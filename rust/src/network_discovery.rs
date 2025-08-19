@@ -8,6 +8,10 @@ pub struct NetworkDiscovery;
 
 impl NetworkDiscovery {
     pub async fn get_external_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
+        if let Ok(ip) = Self::get_ip_via_http_services().await {
+            return Ok(ip);
+        }
+
         if let Ok(ip) = Self::get_ip_via_stun().await {
             return Ok(ip);
         }
@@ -19,17 +23,50 @@ impl NetworkDiscovery {
         Self::get_ip_via_dns_over_https().await
     }
 
+    async fn get_ip_via_http_services() -> Result<IpAddr, Box<dyn std::error::Error>> {
+        let services = vec![
+            "https://api.ipify.org",
+            "https://ifconfig.me/ip",
+            "https://ipinfo.io/ip",
+            "https://icanhazip.com",
+            "https://ident.me",
+        ];
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()?;
+
+        for service in services {
+            if let Ok(response) = client.get(service).send().await {
+                if let Ok(ip_text) = response.text().await {
+                    let ip_str = ip_text.trim();
+                    if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                        println!("External IP detected via {}: {}", service, ip);
+                        return Ok(ip);
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Err("All HTTP IP services failed".into())
+    }
+
     async fn get_ip_via_stun() -> Result<IpAddr, Box<dyn std::error::Error>> {
         let stun_servers = vec![
             "stun.l.google.com:19302",
             "stun1.l.google.com:19302",
             "stun.cloudflare.com:3478",
+            "stun.stunprotocol.org:3478",
+            "stun.ekiga.net:3478",
         ];
 
         for server in stun_servers {
             if let Ok(ip) = Self::query_stun_server(server).await {
+                println!("External IP detected via STUN {}: {}", server, ip);
                 return Ok(ip);
             }
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
         Err("All STUN servers failed".into())
@@ -43,7 +80,7 @@ impl NetworkDiscovery {
 
         let mut buf = [0u8; 1024];
         let (len, _) =
-            tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await??;
+            tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut buf)).await??;
 
         Self::parse_stun_response(&buf[..len])
     }
@@ -151,7 +188,9 @@ impl NetworkDiscovery {
     async fn get_external_ip_from_router(
         location: &str,
     ) -> Result<IpAddr, Box<dyn std::error::Error>> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()?;
         let response = client.get(location).send().await?;
         let body = response.text().await?;
 
@@ -174,7 +213,9 @@ impl NetworkDiscovery {
     }
 
     async fn get_ip_via_dns_over_https() -> Result<IpAddr, Box<dyn std::error::Error>> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()?;
 
         let response = client
             .get("https://1.1.1.1/dns-query")
@@ -194,5 +235,125 @@ impl NetworkDiscovery {
         }
 
         Err("No IP found in DNS response".into())
+    }
+
+    pub async fn test_connectivity() -> ConnectivityInfo {
+        let mut info = ConnectivityInfo::default();
+
+        info.has_internet = Self::test_basic_connectivity().await;
+
+        if info.has_internet {
+            info.external_ip = Self::get_external_ip().await.ok();
+            info.can_use_stun = Self::test_stun_connectivity().await;
+            info.can_use_upnp = Self::test_upnp_connectivity().await;
+        }
+
+        info.blocked_ports = Self::test_common_ports().await;
+
+        info
+    }
+
+    async fn test_basic_connectivity() -> bool {
+        let test_hosts = vec![
+            "8.8.8.8:53",
+            "1.1.1.1:53",
+            "google.com:80",
+            "cloudflare.com:80",
+        ];
+
+        for host in test_hosts {
+            if tokio::net::TcpStream::connect(host).await.is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn test_stun_connectivity() -> bool {
+        Self::query_stun_server("stun.l.google.com:19302")
+            .await
+            .is_ok()
+    }
+
+    async fn test_upnp_connectivity() -> bool {
+        Self::get_ip_via_upnp().await.is_ok()
+    }
+
+    async fn test_common_ports() -> Vec<u16> {
+        let test_ports = vec![80, 443, 8080, 8443, 8000, 9000, 3000];
+        let mut blocked = Vec::new();
+
+        for port in test_ports {
+            let test_address = format!("google.com:{}", port);
+            if tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::net::TcpStream::connect(&test_address),
+            )
+            .await
+            .is_err()
+            {
+                blocked.push(port);
+            }
+        }
+
+        blocked
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ConnectivityInfo {
+    pub has_internet: bool,
+    pub external_ip: Option<IpAddr>,
+    pub can_use_stun: bool,
+    pub can_use_upnp: bool,
+    pub blocked_ports: Vec<u16>,
+}
+
+impl ConnectivityInfo {
+    pub fn print_summary(&self) {
+        println!("\n🌐 Network Connectivity Summary:");
+        println!("================================");
+
+        if self.has_internet {
+            println!("✅ Internet connectivity: Available");
+        } else {
+            println!("❌ Internet connectivity: Not available");
+            return;
+        }
+
+        if let Some(ip) = self.external_ip {
+            println!("🌍 External IP: {}", ip);
+        } else {
+            println!("❓ External IP: Could not detect");
+        }
+
+        if self.can_use_stun {
+            println!("📡 STUN connectivity: Working");
+        } else {
+            println!("🚫 STUN connectivity: Blocked");
+        }
+
+        if self.can_use_upnp {
+            println!("🏠 UPnP connectivity: Working");
+        } else {
+            println!("🚫 UPnP connectivity: Not available");
+        }
+
+        if self.blocked_ports.is_empty() {
+            println!("✅ Common ports: All accessible");
+        } else {
+            println!("⚠️ Blocked ports: {:?}", self.blocked_ports);
+            if self.blocked_ports.len() > 4 {
+                println!("⚠️ Warning: Many ports blocked - you may be behind restrictive firewall");
+            }
+        }
+    }
+
+    pub fn get_recommended_ports(&self) -> Vec<u16> {
+        let all_ports = vec![443, 80, 8080, 8443, 8000, 9000, 3000];
+        all_ports
+            .into_iter()
+            .filter(|port| !self.blocked_ports.contains(port))
+            .collect()
     }
 }
