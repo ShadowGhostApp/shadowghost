@@ -16,21 +16,6 @@ name = "benchmarks"
 path = "bench/benchmarks.rs"
 harness = false
 
-
-[lib]
-name = "shadowghost"
-path = "src/lib.rs"
-crate-type = ["cdylib", "staticlib"]
-
-[[bin]]
-name = "shadowghost"
-path = "src/bin/main.rs"
-
-[[bench]]
-name = "benchmarks"
-path = "bench/benchmarks.rs"
-harness = false
-
 [dependencies]
 # Bridging API for Frontend
 flutter_rust_bridge = "2"
