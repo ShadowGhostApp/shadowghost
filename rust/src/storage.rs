@@ -48,6 +48,125 @@ impl StorageManager {
         })
     }
 
+    pub async fn validate_contacts(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let mut issues = Vec::new();
+        let contacts_file = self.data_dir.join("contacts").join("contacts.json");
+
+        if !contacts_file.exists() {
+            return Ok(issues);
+        }
+
+        match async_fs::read_to_string(&contacts_file).await {
+            Ok(json_data) => match serde_json::from_str::<ContactDatabase>(&json_data) {
+                Ok(database) => {
+                    for (id, contact) in &database.contacts {
+                        if id.is_empty() {
+                            issues.push("Found contact with empty ID".to_string());
+                        }
+
+                        if contact.name.is_empty() {
+                            issues.push(format!("Contact {} has empty name", id));
+                        }
+
+                        if contact.address.is_empty() {
+                            issues.push(format!("Contact {} has empty address", contact.name));
+                        } else if !contact.address.contains(':') {
+                            issues.push(format!(
+                                "Contact {} has invalid address format",
+                                contact.name
+                            ));
+                        }
+
+                        if contact.last_seen == 0 {
+                            issues.push(format!("Contact {} has invalid timestamp", contact.name));
+                        }
+                    }
+
+                    if database.version.is_empty() {
+                        issues.push("Database missing version information".to_string());
+                    }
+                }
+                Err(e) => {
+                    issues.push(format!("Failed to parse contacts database: {}", e));
+                }
+            },
+            Err(e) => {
+                issues.push(format!("Failed to read contacts file: {}", e));
+            }
+        }
+
+        Ok(issues)
+    }
+
+    pub async fn validate_chats(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let mut issues = Vec::new();
+        let chats_dir = self.data_dir.join("chats");
+
+        if !chats_dir.exists() {
+            return Ok(issues);
+        }
+
+        let mut entries = async_fs::read_dir(&chats_dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            if let Some(file_name) = entry.file_name().to_str() {
+                if file_name.ends_with(".json") {
+                    let chat_file = entry.path();
+
+                    match async_fs::read_to_string(&chat_file).await {
+                        Ok(json_data) => match serde_json::from_str::<ChatHistory>(&json_data) {
+                            Ok(history) => {
+                                if history.participants.is_empty() {
+                                    issues.push(format!("Chat {} has no participants", file_name));
+                                }
+
+                                if history.messages.is_empty() {
+                                    issues.push(format!("Chat {} has no messages", file_name));
+                                }
+
+                                for (i, message) in history.messages.iter().enumerate() {
+                                    if message.id.is_empty() {
+                                        issues.push(format!(
+                                            "Chat {} message {} has empty ID",
+                                            file_name, i
+                                        ));
+                                    }
+
+                                    if message.from.is_empty() || message.to.is_empty() {
+                                        issues.push(format!(
+                                            "Chat {} message {} has empty sender/recipient",
+                                            file_name, i
+                                        ));
+                                    }
+
+                                    if message.timestamp == 0 {
+                                        issues.push(format!(
+                                            "Chat {} message {} has invalid timestamp",
+                                            file_name, i
+                                        ));
+                                    }
+                                }
+
+                                if history.created_at == 0 || history.last_message_at == 0 {
+                                    issues
+                                        .push(format!("Chat {} has invalid timestamps", file_name));
+                                }
+                            }
+                            Err(e) => {
+                                issues.push(format!("Failed to parse chat {}: {}", file_name, e));
+                            }
+                        },
+                        Err(e) => {
+                            issues.push(format!("Failed to read chat file {}: {}", file_name, e));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(issues)
+    }
+
     pub async fn save_contacts(
         &self,
         contacts: &HashMap<String, Contact>,

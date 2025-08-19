@@ -8,21 +8,32 @@ async fn auto_initialize_and_start(
     if !core.is_initialized() {
         println!("Initializing Shadow Ghost...");
 
-        print!("Enter your name (default: user): ");
-        io::stdout().flush()?;
-
-        let mut name = String::new();
-        io::stdin().read_line(&mut name)?;
-        let name = name.trim();
-
-        let user_name = if name.is_empty() {
-            "user".to_string()
+        let stored_name = core.get_stored_user_name().await;
+        let user_name = if let Some(name) = stored_name {
+            println!("Welcome back, {}!", name);
+            name
         } else {
-            name.to_string()
+            print!("Enter your name (default: user): ");
+            io::stdout().flush()?;
+
+            let mut name = String::new();
+            io::stdin().read_line(&mut name)?;
+            let name = name.trim();
+
+            if name.is_empty() {
+                "user".to_string()
+            } else {
+                name.to_string()
+            }
         };
 
         match core.initialize(Some(user_name.clone())).await {
-            Ok(()) => println!("Initialized successfully as '{}'!", user_name),
+            Ok(()) => {
+                println!("Initialized successfully as '{}'!", user_name);
+                if let Some(peer_info) = core.get_peer_info().await {
+                    println!("👤 You are now: {}", peer_info);
+                }
+            }
             Err(e) => {
                 println!("Failed to initialize: {}", e);
                 return Err(Box::new(e));
@@ -30,28 +41,38 @@ async fn auto_initialize_and_start(
         }
     }
 
+    if let Ok(connection_info) = core.get_connection_info().await {
+        println!("\n🔗 Connection Information:");
+        for line in connection_info.lines() {
+            println!("  {}", line);
+        }
+    }
+
     println!("\nStarting server...");
-    print!("Would you like to start the server now? (Y/n): ");
-    io::stdout().flush()?;
+    match core.start_server().await {
+        Ok(()) => {
+            println!("✓ Server started successfully!");
+            println!("You can now receive messages from other peers.");
+        }
+        Err(e) => {
+            println!("Failed to start server: {}", e);
+            println!("You can start it later with the 'start' command.");
+        }
+    }
 
-    let mut response = String::new();
-    io::stdin().read_line(&mut response)?;
-    let response = response.trim().to_lowercase();
-
-    if response.is_empty() || response == "y" || response == "yes" {
-        match core.start_server().await {
-            Ok(()) => {
-                println!("✓ Server started successfully!");
-                println!("You can now receive messages from other peers.");
-            }
-            Err(e) => {
-                println!("Failed to start server: {}", e);
-                println!("You can start it later with the 'start' command.");
+    if let Ok(contacts) = core.get_contacts().await {
+        let mut unread_total = 0;
+        for contact in &contacts {
+            if let Ok(count) = core.get_unread_message_count(&contact.name).await {
+                if count > 0 {
+                    unread_total += count;
+                    println!("💬 {} unread messages from {}", count, contact.name);
+                }
             }
         }
-    } else {
-        println!("Server not started. Use 'start' command when ready.");
-        println!("⚠ Note: You won't receive messages until the server is started.");
+        if unread_total > 0 {
+            println!("📨 Total: {} unread messages", unread_total);
+        }
     }
 
     Ok(core)

@@ -2,12 +2,13 @@ use crate::config::{AppConfig, ConfigManager};
 use crate::contact_manager::{ContactError, ContactManager};
 use crate::events::{EventBus, NetworkEvent};
 use crate::network::{ChatMessage, Contact, NetworkManager};
+use crate::network_discovery::NetworkDiscovery;
 use crate::peer::Peer;
 use crate::storage::StorageManager;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 static PORT_LOCK: OnceLock<Arc<Mutex<()>>> = OnceLock::new();
 
@@ -50,17 +51,19 @@ pub enum CoreError {
     Config(String),
     Contact(String),
     InvalidState(String),
+    Validation(String),
 }
 
 impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CoreError::Network(msg) => write!(f, "Сетевая ошибка: {}", msg),
-            CoreError::Storage(msg) => write!(f, "Ошибка хранения: {}", msg),
-            CoreError::Crypto(msg) => write!(f, "Ошибка шифрования: {}", msg),
-            CoreError::Config(msg) => write!(f, "Ошибка конфигурации: {}", msg),
-            CoreError::Contact(msg) => write!(f, "Ошибка контакта: {}", msg),
-            CoreError::InvalidState(msg) => write!(f, "Некорректное состояние: {}", msg),
+            CoreError::Network(msg) => write!(f, "Network error: {}", msg),
+            CoreError::Storage(msg) => write!(f, "Storage error: {}", msg),
+            CoreError::Crypto(msg) => write!(f, "Crypto error: {}", msg),
+            CoreError::Config(msg) => write!(f, "Config error: {}", msg),
+            CoreError::Contact(msg) => write!(f, "Contact error: {}", msg),
+            CoreError::InvalidState(msg) => write!(f, "Invalid state: {}", msg),
+            CoreError::Validation(msg) => write!(f, "Validation error: {}", msg),
         }
     }
 }
@@ -82,6 +85,7 @@ pub struct ShadowGhostCore {
     is_initialized: bool,
     allocated_port: Option<u16>,
     server_started: bool,
+    external_ip: Arc<RwLock<Option<std::net::IpAddr>>>,
 }
 
 impl ShadowGhostCore {
@@ -118,12 +122,230 @@ impl ShadowGhostCore {
             is_initialized: false,
             allocated_port: None,
             server_started: false,
+            external_ip: Arc::new(RwLock::new(None)),
         })
+    }
+
+    pub fn new_for_test(test_id: &str) -> Result<Self, CoreError> {
+        let temp_dir = std::env::temp_dir().join("shadowghost_test").join(test_id);
+        std::fs::create_dir_all(&temp_dir).map_err(|e| CoreError::Config(e.to_string()))?;
+
+        let config_path = temp_dir.join("config.toml");
+        let mut config_manager =
+            ConfigManager::new(&config_path).map_err(|e| CoreError::Config(e.to_string()))?;
+
+        config_manager
+            .update_config(|config| {
+                config.storage.data_dir = temp_dir.clone();
+            })
+            .map_err(|e| CoreError::Config(e.to_string()))?;
+
+        config_manager
+            .enable_test_mode()
+            .map_err(|e| CoreError::Config(e.to_string()))?;
+
+        let event_bus = EventBus::new();
+
+        let storage_manager =
+            StorageManager::new(config_manager.get_config().clone(), event_bus.clone())
+                .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        Ok(Self {
+            config_manager,
+            network_manager: None,
+            contact_manager: None,
+            storage_manager,
+            event_bus,
+            is_initialized: false,
+            allocated_port: None,
+            server_started: false,
+            external_ip: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    pub async fn get_stored_user_name(&self) -> Option<String> {
+        let config = self.config_manager.get_config();
+        if config.user.name != "user" {
+            Some(config.user.name.clone())
+        } else {
+            None
+        }
+    }
+
+    async fn detect_external_ip(&self) -> Result<(), CoreError> {
+        let config = self.config_manager.get_config();
+
+        if config.network.test_mode || !config.network.auto_detect_external_ip {
+            let mut external_ip = self.external_ip.write().await;
+            *external_ip = None;
+            if config.network.test_mode {
+                println!("Test mode: Using localhost only");
+            }
+            return Ok(());
+        }
+
+        match NetworkDiscovery::get_external_ip().await {
+            Ok(ip) => {
+                let mut external_ip = self.external_ip.write().await;
+                *external_ip = Some(ip);
+                println!("Detected external IP: {}", ip);
+            }
+            Err(e) => {
+                println!("Could not detect external IP: {}", e);
+                println!("Using local address for connections");
+                let mut external_ip = self.external_ip.write().await;
+                *external_ip = None;
+            }
+        }
+        Ok(())
+    }
+
+    async fn get_or_allocate_port(&self) -> Result<u16, CoreError> {
+        let config = self.config_manager.get_config();
+
+        if config.network.test_mode {
+            let test_port = Self::find_and_reserve_port(0)
+                .await
+                .map_err(|e| CoreError::Network(format!("Failed to allocate test port: {}", e)))?;
+            println!("Test mode: Using random port: {}", test_port);
+            return Ok(test_port);
+        }
+
+        if config.network.use_fixed_port {
+            let desired_port = config.network.default_port;
+            if self.is_port_available(desired_port).await {
+                println!("Using fixed port: {}", desired_port);
+                self.save_port(desired_port).await?;
+                return Ok(desired_port);
+            } else {
+                println!(
+                    "Fixed port {} not available, trying alternatives",
+                    desired_port
+                );
+
+                for offset in 1..=10 {
+                    let alt_port = desired_port + offset;
+                    if self.is_port_available(alt_port).await {
+                        println!("Using alternative port: {}", alt_port);
+                        self.save_port(alt_port).await?;
+                        return Ok(alt_port);
+                    }
+                }
+                return Err(CoreError::Network(format!(
+                    "No available ports near {}",
+                    desired_port
+                )));
+            }
+        }
+
+        if let Some(saved_port) = self.get_saved_port().await {
+            if self.is_port_available(saved_port).await {
+                println!("Using saved port: {}", saved_port);
+                return Ok(saved_port);
+            } else {
+                println!(
+                    "Saved port {} not available, allocating new one",
+                    saved_port
+                );
+            }
+        }
+
+        let new_port = Self::find_and_reserve_port(config.network.default_port)
+            .await
+            .map_err(|e| CoreError::Network(format!("Failed to allocate port: {}", e)))?;
+
+        self.save_port(new_port).await?;
+        println!("Allocated new port: {}", new_port);
+        Ok(new_port)
+    }
+
+    async fn get_saved_port(&self) -> Option<u16> {
+        let config = self.config_manager.get_config();
+        if config.network.test_mode {
+            return None;
+        }
+
+        let port_file = self.get_app_data_dir().ok()?.join("saved_port.txt");
+        if let Ok(content) = tokio::fs::read_to_string(&port_file).await {
+            content.trim().parse().ok()
+        } else {
+            None
+        }
+    }
+
+    async fn save_port(&self, port: u16) -> Result<(), CoreError> {
+        let config = self.config_manager.get_config();
+        if config.network.test_mode {
+            return Ok(());
+        }
+
+        let port_file = self
+            .get_app_data_dir()
+            .map_err(|e| CoreError::Config(e.to_string()))?
+            .join("saved_port.txt");
+
+        tokio::fs::write(&port_file, port.to_string())
+            .await
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn is_port_available(&self, port: u16) -> bool {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                drop(listener);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn get_app_data_dir(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        get_app_data_dir()
+    }
+
+    async fn validate_stored_data(&self) -> Result<(), CoreError> {
+        match self.storage_manager.validate_contacts().await {
+            Ok(issues) => {
+                if !issues.is_empty() {
+                    println!("Data validation issues found:");
+                    for issue in issues {
+                        println!("  - {}", issue);
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(CoreError::Validation(format!(
+                    "Failed to validate contacts: {}",
+                    e
+                )));
+            }
+        }
+
+        match self.storage_manager.validate_chats().await {
+            Ok(issues) => {
+                if !issues.is_empty() {
+                    println!("Chat history validation issues:");
+                    for issue in issues {
+                        println!("  - {}", issue);
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(CoreError::Validation(format!(
+                    "Failed to validate chats: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn initialize(&mut self, user_name: Option<String>) -> Result<(), CoreError> {
         if self.is_initialized {
-            return Err(CoreError::InvalidState("Уже инициализировано".to_string()));
+            return Err(CoreError::InvalidState("Already initialized".to_string()));
         }
 
         if let Some(name) = user_name {
@@ -132,18 +354,30 @@ impl ShadowGhostCore {
                 .map_err(|e| CoreError::Config(e.to_string()))?;
         }
 
+        self.detect_external_ip().await?;
+        self.validate_stored_data().await?;
+
         let config = self.config_manager.get_config();
 
-        let allocated_port = Self::find_and_reserve_port(config.network.default_port)
-            .await
-            .map_err(|e| CoreError::Network(format!("Не удалось выделить порт: {}", e)))?;
+        let allocated_port = self.get_or_allocate_port().await?;
 
-        let address = format!("127.0.0.1:{}", allocated_port);
-        let peer = Peer::new_with_entropy(config.user.name.clone(), address);
+        let public_address = {
+            let external_ip = self.external_ip.read().await;
+            if let Some(ip) = *external_ip {
+                format!("{}:{}", ip, allocated_port)
+            } else {
+                format!("127.0.0.1:{}", allocated_port)
+            }
+        };
 
-        println!("🚀 Инициализация с информацией о пользователе:");
-        println!("  Имя: {}", peer.name);
-        println!("  Адрес: {}", peer.address);
+        let local_address = format!("127.0.0.1:{}", allocated_port);
+
+        let peer = Peer::new_with_entropy(config.user.name.clone(), public_address.clone());
+
+        println!("Initializing with user info:");
+        println!("  Name: {}", peer.name);
+        println!("  Public Address: {}", public_address);
+        println!("  Local Address: {}", local_address);
         println!("  ID: {}", peer.get_short_id());
 
         let network_manager = NetworkManager::new(peer.clone(), self.event_bus.clone())
@@ -164,7 +398,7 @@ impl ShadowGhostCore {
 
     async fn load_saved_data(&self, contact_manager: &ContactManager) -> Result<(), CoreError> {
         if let Ok(contacts) = self.storage_manager.load_contacts().await {
-            println!("📂 Загружено {} сохраненных контактов", contacts.len());
+            println!("Loaded {} saved contacts", contacts.len());
             contact_manager
                 .load_contacts(contacts)
                 .await
@@ -178,13 +412,37 @@ impl ShadowGhostCore {
         &self.event_bus
     }
 
-    pub fn get_config(&self) -> &AppConfig {
+    pub fn get_config(&self) -> AppConfig {
         self.config_manager.get_config()
     }
 
     async fn find_and_reserve_port(start_port: u16) -> Result<u16, std::io::Error> {
         let port_lock = PORT_LOCK.get_or_init(|| Arc::new(Mutex::new(())));
         let _lock = port_lock.lock().await;
+
+        if start_port == 0 {
+            use rand::Rng;
+            let mut rng = rand::rng();
+            for _ in 0..100 {
+                let random_port = rng.random_range(49152..65535);
+                match TcpListener::bind(("127.0.0.1", random_port)) {
+                    Ok(listener) => {
+                        drop(listener);
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+                        match TcpListener::bind(("127.0.0.1", random_port)) {
+                            Ok(_) => return Ok(random_port),
+                            Err(_) => continue,
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "No available random ports found",
+            ));
+        }
 
         let pid = std::process::id();
         let timestamp = std::time::SystemTime::now()
@@ -217,7 +475,7 @@ impl ShadowGhostCore {
 
         Err(std::io::Error::new(
             std::io::ErrorKind::AddrInUse,
-            "Не найдено доступных портов после обширного поиска",
+            "No available ports found after extensive search",
         ))
     }
 
@@ -225,7 +483,9 @@ impl ShadowGhostCore {
         self.ensure_initialized()?;
 
         if self.server_started {
-            return Err(CoreError::InvalidState("Сервер уже запущен".to_string()));
+            return Err(CoreError::InvalidState(
+                "Server already running".to_string(),
+            ));
         }
 
         let port = self.allocated_port.unwrap();
@@ -234,29 +494,29 @@ impl ShadowGhostCore {
         let nm_clone = network_manager.clone();
         let cm_clone = contact_manager.get_contacts_ref();
 
-        println!("🚀 Запуск сервера на порту {}", port);
+        println!("Starting server on all interfaces (0.0.0.0:{})", port);
+        let external_ip = self.external_ip.read().await;
+        if let Some(ip) = *external_ip {
+            println!("External connections available at: {}:{}", ip, port);
+        }
 
         tokio::spawn(async move {
             if let Err(e) = nm_clone.start_server(port, cm_clone).await {
                 nm_clone.event_bus.emit_network(NetworkEvent::Error {
                     error: e.to_string(),
-                    context: Some("Запуск сервера".to_string()),
+                    context: Some("Server start".to_string()),
                 });
             }
         });
 
-        // Даем время серверу запуститься
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
-        // Проверяем, что сервер действительно запустился
         if let Some(nm) = &self.network_manager {
             if nm.is_running() {
                 self.server_started = true;
-                println!("✅ Сервер успешно запущен!");
+                println!("Server started successfully!");
             } else {
-                return Err(CoreError::Network(
-                    "Не удалось запустить сервер".to_string(),
-                ));
+                return Err(CoreError::Network("Failed to start server".to_string()));
             }
         }
 
@@ -267,10 +527,10 @@ impl ShadowGhostCore {
         self.ensure_initialized()?;
 
         if !self.server_started {
-            return Err(CoreError::InvalidState("Сервер не запущен".to_string()));
+            return Err(CoreError::InvalidState("Server not running".to_string()));
         }
 
-        println!("🛑 Остановка сервера...");
+        println!("Stopping server...");
 
         if let Some(nm) = &self.network_manager {
             nm.shutdown()
@@ -279,12 +539,12 @@ impl ShadowGhostCore {
         }
 
         self.server_started = false;
-        println!("✅ Сервер остановлен");
+        println!("Server stopped");
         Ok(())
     }
 
     pub async fn restart_server(&mut self) -> Result<(), CoreError> {
-        println!("🔄 Перезапуск сервера...");
+        println!("Restarting server...");
 
         if self.server_started {
             self.stop_server().await?;
@@ -325,7 +585,7 @@ impl ShadowGhostCore {
 
         if result.is_ok() {
             self.save_contacts().await?;
-            println!("💾 Контакты сохранены");
+            println!("Contacts saved");
         }
 
         result.map(|_| ()).map_err(|e| e.into())
@@ -336,7 +596,7 @@ impl ShadowGhostCore {
 
         if !self.server_started {
             return Err(CoreError::InvalidState(
-                "Сервер не запущен. Выполните команду 'start' сначала.".to_string(),
+                "Server not running. Execute 'start' command first.".to_string(),
             ));
         }
 
@@ -346,7 +606,7 @@ impl ShadowGhostCore {
             .unwrap()
             .get_contact_by_name(contact_name)
             .await
-            .ok_or_else(|| CoreError::Contact(format!("Контакт {} не найден", contact_name)))?;
+            .ok_or_else(|| CoreError::Contact(format!("Contact {} not found", contact_name)))?;
 
         let result = self
             .network_manager
@@ -390,9 +650,8 @@ impl ShadowGhostCore {
             .get_chat_messages(contact_name)
             .await;
 
-        let my_name = &self.network_manager.as_ref().unwrap().get_peer().name;
+        let my_name = &self.network_manager.as_ref().unwrap().get_peer().await.name;
 
-        // Считаем сообщения, отправленные контакту (не от нас)
         let received_count = messages
             .iter()
             .filter(|msg| msg.from != *my_name && msg.to == *my_name)
@@ -403,13 +662,12 @@ impl ShadowGhostCore {
 
     pub async fn shutdown(&mut self) -> Result<(), CoreError> {
         if !self.is_initialized {
-            println!("⚠️ Система уже не инициализирована");
+            println!("System not initialized");
             return Ok(());
         }
 
-        println!("🛑 Завершение работы ShadowGhost...");
+        println!("Shutting down ShadowGhost...");
 
-        // Сначала останавливаем сервер, если он запущен
         if self.server_started {
             if let Some(nm) = &self.network_manager {
                 nm.shutdown()
@@ -419,17 +677,15 @@ impl ShadowGhostCore {
             self.server_started = false;
         }
 
-        // Сохраняем данные контактов
         if let Some(cm) = &self.contact_manager {
             let contacts = cm.get_contacts_map().await;
             if let Err(e) = self.storage_manager.save_contacts(&contacts).await {
-                println!("⚠️ Предупреждение: Не удалось сохранить контакты: {}", e);
+                println!("Warning: Failed to save contacts: {}", e);
             } else {
-                println!("💾 Контакты сохранены");
+                println!("Contacts saved");
             }
         }
 
-        // Сохраняем историю чатов
         if let Some(nm) = &self.network_manager {
             let chats = nm.get_chats().await;
             let mut saved_chats = 0;
@@ -439,26 +695,22 @@ impl ShadowGhostCore {
                     .save_chat_history_with_cleanup(chat_key, messages)
                     .await
                 {
-                    println!(
-                        "⚠️ Предупреждение: Не удалось сохранить чат {}: {}",
-                        chat_key, e
-                    );
+                    println!("Warning: Failed to save chat {}: {}", chat_key, e);
                 } else {
                     saved_chats += 1;
                 }
             }
             if saved_chats > 0 {
-                println!("💾 Сохранено {} чатов", saved_chats);
+                println!("Saved {} chats", saved_chats);
             }
         }
 
-        // Очищаем ресурсы
         self.network_manager = None;
         self.contact_manager = None;
         self.allocated_port = None;
         self.is_initialized = false;
 
-        println!("✅ ShadowGhost корректно завершен");
+        println!("ShadowGhost shutdown complete");
         Ok(())
     }
 
@@ -476,9 +728,10 @@ impl ShadowGhostCore {
     async fn save_chat_data(&self, contact_name: &str) -> Result<(), CoreError> {
         if let Some(nm) = &self.network_manager {
             let chats = nm.get_chats().await;
-            let peer_name = &nm.get_peer().name.as_str();
+            let peer = nm.get_peer().await;
+            let peer_name = peer.name.as_str();
 
-            let chat_key = if peer_name < &contact_name {
+            let chat_key = if peer_name < contact_name {
                 format!("{}_{}", peer_name, contact_name)
             } else {
                 format!("{}_{}", contact_name, peer_name)
@@ -497,7 +750,7 @@ impl ShadowGhostCore {
     fn ensure_initialized(&self) -> Result<(), CoreError> {
         if !self.is_initialized {
             return Err(CoreError::InvalidState(
-                "Система не инициализирована".to_string(),
+                "System not initialized".to_string(),
             ));
         }
         Ok(())
@@ -507,31 +760,30 @@ impl ShadowGhostCore {
         self.is_initialized
     }
 
-    pub fn get_peer_info(&self) -> Option<String> {
+    pub async fn get_peer_info(&self) -> Option<String> {
         if let Some(nm) = &self.network_manager {
-            let peer = nm.get_peer();
+            let peer = nm.get_peer().await;
             Some(format!("{} ({})", peer.name, peer.address))
         } else {
             None
         }
     }
 
-    // Дополнительные методы для мониторинга состояния
     pub async fn get_server_status(&self) -> String {
         if !self.is_initialized {
-            return "Не инициализировано".to_string();
+            return "Not initialized".to_string();
         }
 
         if let Some(nm) = &self.network_manager {
             if nm.is_running() {
-                format!("Запущен на порту {}", self.allocated_port.unwrap_or(0))
+                format!("Running on port {}", self.allocated_port.unwrap_or(0))
             } else if self.server_started {
-                "Запускается...".to_string()
+                "Starting...".to_string()
             } else {
-                "Остановлен".to_string()
+                "Stopped".to_string()
             }
         } else {
-            "Ошибка менеджера сети".to_string()
+            "Network manager error".to_string()
         }
     }
 
@@ -542,8 +794,94 @@ impl ShadowGhostCore {
             Ok(nm.get_network_stats().await)
         } else {
             Err(CoreError::InvalidState(
-                "Сетевой менеджер недоступен".to_string(),
+                "Network manager unavailable".to_string(),
             ))
         }
+    }
+
+    pub async fn update_external_address(&self) -> Result<(), CoreError> {
+        if !self.is_initialized {
+            return Err(CoreError::InvalidState(
+                "System not initialized".to_string(),
+            ));
+        }
+
+        let old_external_ip = {
+            let external_ip = self.external_ip.read().await;
+            *external_ip
+        };
+
+        self.detect_external_ip().await?;
+
+        let new_external_ip = {
+            let external_ip = self.external_ip.read().await;
+            *external_ip
+        };
+
+        if old_external_ip != new_external_ip {
+            if let Some(ip) = new_external_ip {
+                let port = self.allocated_port.unwrap();
+                let new_address = format!("{}:{}", ip, port);
+
+                if let Some(nm) = &self.network_manager {
+                    nm.update_peer_address(new_address.clone()).await;
+                }
+
+                println!("Updated external address to: {}", new_address);
+            } else {
+                println!("External IP no longer available, using local address");
+            }
+        } else {
+            println!("External IP unchanged");
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_connection_info(&self) -> Result<String, CoreError> {
+        self.ensure_initialized()?;
+
+        if let Some(_nm) = &self.network_manager {
+            let port = self.allocated_port.unwrap();
+            let external_ip = self.external_ip.read().await;
+
+            let info = if let Some(ip) = *external_ip {
+                format!("External: {}:{}\nLocal: 127.0.0.1:{}", ip, port, port)
+            } else {
+                format!("Local only: 127.0.0.1:{}", port)
+            };
+
+            Ok(info)
+        } else {
+            Err(CoreError::InvalidState(
+                "Network manager not available".to_string(),
+            ))
+        }
+    }
+
+    pub async fn check_contact_online(&self, contact_name: &str) -> bool {
+        if !self.is_initialized {
+            return false;
+        }
+
+        if let Some(cm) = &self.contact_manager {
+            cm.check_contact_online(contact_name).await
+        } else {
+            false
+        }
+    }
+
+    pub async fn update_user_name(&mut self, new_name: String) -> Result<(), CoreError> {
+        self.config_manager
+            .set_user_name(new_name.clone())
+            .map_err(|e| CoreError::Config(e.to_string()))?;
+
+        if self.is_initialized {
+            if let Some(nm) = &self.network_manager {
+                nm.update_peer_name(new_name).await;
+            }
+        }
+
+        Ok(())
     }
 }

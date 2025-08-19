@@ -1,175 +1,308 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
-
-fn get_app_data_dir() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .or_else(|_| {
-                std::env::var("USERPROFILE")
-                    .map(|p| PathBuf::from(p).join("AppData").join("Roaming"))
-            })
-            .unwrap_or_else(|_| PathBuf::from("C:\\Users\\Default\\AppData\\Roaming"))
-            .join("ShadowGhost")
-    } else if cfg!(target_os = "macos") {
-        std::env::var("HOME")
-            .map(|p| PathBuf::from(p).join("Library").join("Application Support"))
-            .unwrap_or_else(|_| PathBuf::from("/Users/Shared/Library/Application Support"))
-            .join("ShadowGhost")
-    } else {
-        std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|_| {
-                std::env::var("HOME").map(|p| PathBuf::from(p).join(".local").join("share"))
-            })
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ShadowGhost")
-    }
-}
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    pub user: UserConfig,
-    pub network: NetworkConfig,
-    pub security: SecurityConfig,
-    pub storage: StorageConfig,
+pub struct NetworkConfig {
+    pub default_port: u16,
+    pub use_fixed_port: bool,
+    pub auto_detect_external_ip: bool,
+    pub connection_timeout: u64,
+    pub max_connections: u32,
+    pub test_mode: bool,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            default_port: 8080,
+            use_fixed_port: false,
+            auto_detect_external_ip: true,
+            connection_timeout: 10,
+            max_connections: 100,
+            test_mode: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
     pub name: String,
-    pub language: String,
-    pub auto_start_server: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
-    pub default_port: u16,
-    pub max_connections: u32,
-    pub connection_timeout_ms: u64,
-    pub heartbeat_interval_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityConfig {
     pub auto_accept_contacts: bool,
-    pub require_encryption: bool,
-    pub allow_anonymous_contacts: bool,
-    pub max_message_size: usize,
+    pub show_notifications: bool,
+}
+
+impl Default for UserConfig {
+    fn default() -> Self {
+        Self {
+            name: "user".to_string(),
+            auto_accept_contacts: false,
+            show_notifications: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     pub data_dir: PathBuf,
-    pub max_chat_history: u32,
     pub auto_cleanup_days: u32,
-    pub compress_old_messages: bool,
+    pub max_chat_history: u32,
+    pub enable_backup: bool,
+    pub backup_interval_hours: u32,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            data_dir: PathBuf::from("./data"),
+            auto_cleanup_days: 30,
+            max_chat_history: 1000,
+            enable_backup: true,
+            backup_interval_hours: 24,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CryptoConfig {
+    pub encryption_enabled: bool,
+    pub key_rotation_days: u32,
+    pub algorithm: String,
+}
+
+impl Default for CryptoConfig {
+    fn default() -> Self {
+        Self {
+            encryption_enabled: true,
+            key_rotation_days: 90,
+            algorithm: "AES-256-GCM".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub network: NetworkConfig,
+    pub user: UserConfig,
+    pub storage: StorageConfig,
+    pub crypto: CryptoConfig,
+    pub version: String,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            user: UserConfig {
-                name: "user".to_string(),
-                language: "en".to_string(),
-                auto_start_server: true,
-            },
-            network: NetworkConfig {
-                default_port: 8000,
-                max_connections: 100,
-                connection_timeout_ms: 30000,
-                heartbeat_interval_ms: 60000,
-            },
-            security: SecurityConfig {
-                auto_accept_contacts: false,
-                require_encryption: false,
-                allow_anonymous_contacts: false,
-                max_message_size: 1024 * 1024,
-            },
-            storage: StorageConfig {
-                data_dir: get_app_data_dir(),
-                max_chat_history: 1000,
-                auto_cleanup_days: 90,
-                compress_old_messages: false,
-            },
+            network: NetworkConfig::default(),
+            user: UserConfig::default(),
+            storage: StorageConfig::default(),
+            crypto: CryptoConfig::default(),
+            version: "1.0.0".to_string(),
         }
-    }
-}
-
-impl AppConfig {
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        if path.as_ref().exists() {
-            let content = fs::read_to_string(path)?;
-            let mut config: AppConfig = toml::from_str(&content)?;
-
-            if config.storage.data_dir == PathBuf::from("./data") {
-                config.storage.data_dir = get_app_data_dir();
-            }
-
-            Ok(config)
-        } else {
-            let default = AppConfig::default();
-            let _ = default.save_to_file(path);
-            Ok(default)
-        }
-    }
-
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(parent) = path.as_ref().parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
-        Ok(())
     }
 }
 
 pub struct ConfigManager {
-    config: AppConfig,
     config_path: PathBuf,
+    config: Arc<RwLock<AppConfig>>,
 }
 
 impl ConfigManager {
-    pub fn new<P: AsRef<Path>>(config_path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let config_path = config_path.as_ref().to_path_buf();
-        let config = AppConfig::load_from_file(&config_path)?;
+    pub fn new(config_path: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = if config_path.exists() {
+            let config_data = std::fs::read_to_string(config_path)?;
+            toml::from_str(&config_data).unwrap_or_default()
+        } else {
+            let default_config = AppConfig::default();
+            let config_data = toml::to_string_pretty(&default_config)?;
+
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            std::fs::write(config_path, config_data)?;
+            default_config
+        };
 
         Ok(Self {
-            config,
-            config_path,
+            config_path: config_path.clone(),
+            config: Arc::new(RwLock::new(config)),
         })
     }
 
-    pub fn get_config(&self) -> &AppConfig {
-        &self.config
+    pub fn get_config(&self) -> AppConfig {
+        let config = self.config.read().unwrap();
+        config.clone()
     }
 
     pub fn update_config<F>(&mut self, updater: F) -> Result<(), Box<dyn std::error::Error>>
     where
         F: FnOnce(&mut AppConfig),
     {
-        updater(&mut self.config);
+        {
+            let mut config = self.config.write().unwrap();
+            updater(&mut config);
+        }
+
         self.save_config()
     }
 
     pub fn set_user_name(&mut self, name: String) -> Result<(), Box<dyn std::error::Error>> {
-        self.config.user.name = name;
-        self.save_config()
+        self.update_config(|config| {
+            config.user.name = name;
+        })
     }
 
-    pub fn set_default_port(&mut self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-        self.config.network.default_port = port;
-        self.save_config()
+    pub fn enable_test_mode(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.network.test_mode = true;
+            config.network.auto_detect_external_ip = false;
+            config.network.use_fixed_port = false;
+            config.storage.enable_backup = false;
+        })
     }
 
-    pub fn toggle_auto_accept_contacts(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.config.security.auto_accept_contacts = !self.config.security.auto_accept_contacts;
-        self.save_config()
+    pub fn set_network_port(&mut self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.network.default_port = port;
+        })
+    }
+
+    pub fn set_data_directory(&mut self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.storage.data_dir = path;
+        })
+    }
+
+    pub fn toggle_encryption(&mut self, enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.crypto.encryption_enabled = enabled;
+        })
+    }
+
+    pub fn set_auto_cleanup_days(&mut self, days: u32) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.storage.auto_cleanup_days = days;
+        })
+    }
+
+    pub fn set_max_chat_history(&mut self, max: u32) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_config(|config| {
+            config.storage.max_chat_history = max;
+        })
     }
 
     fn save_config(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.config.save_to_file(&self.config_path)
+        let config = self.config.read().unwrap();
+        let config_data = toml::to_string_pretty(&*config)?;
+        std::fs::write(&self.config_path, config_data)?;
+        Ok(())
+    }
+
+    pub fn reload_config(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.config_path.exists() {
+            let config_data = std::fs::read_to_string(&self.config_path)?;
+            let new_config: AppConfig = toml::from_str(&config_data)?;
+
+            let mut config = self.config.write().unwrap();
+            *config = new_config;
+        }
+
+        Ok(())
+    }
+
+    pub fn reset_to_defaults(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        {
+            let mut config = self.config.write().unwrap();
+            *config = AppConfig::default();
+        }
+
+        self.save_config()
+    }
+
+    pub fn validate_config(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let config = self.config.read().unwrap();
+        let mut issues = Vec::new();
+
+        if config.network.default_port < 1024 {
+            issues.push("Invalid network port range".to_string());
+        }
+
+        if config.network.connection_timeout == 0 {
+            issues.push("Connection timeout cannot be zero".to_string());
+        }
+
+        if config.network.max_connections == 0 {
+            issues.push("Max connections cannot be zero".to_string());
+        }
+
+        if config.user.name.is_empty() {
+            issues.push("User name cannot be empty".to_string());
+        }
+
+        if config.storage.auto_cleanup_days == 0 {
+            issues.push("Auto cleanup days cannot be zero".to_string());
+        }
+
+        if config.storage.max_chat_history == 0 {
+            issues.push("Max chat history cannot be zero".to_string());
+        }
+
+        if config.crypto.key_rotation_days == 0 {
+            issues.push("Key rotation days cannot be zero".to_string());
+        }
+
+        Ok(issues)
+    }
+
+    pub fn export_config(&self, export_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        let config = self.config.read().unwrap();
+        let config_data = toml::to_string_pretty(&*config)?;
+        std::fs::write(export_path, config_data)?;
+        Ok(())
+    }
+
+    pub fn import_config(
+        &mut self,
+        import_path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if !import_path.exists() {
+            return Err("Import file does not exist".into());
+        }
+
+        let config_data = std::fs::read_to_string(import_path)?;
+        let imported_config: AppConfig = toml::from_str(&config_data)?;
+
+        {
+            let mut config = self.config.write().unwrap();
+            *config = imported_config;
+        }
+
+        self.save_config()
+    }
+
+    pub fn get_config_summary(&self) -> String {
+        let config = self.config.read().unwrap();
+
+        format!(
+            "ShadowGhost Configuration:\n\
+             User: {}\n\
+             Network Port: {}\n\
+             Data Directory: {}\n\
+             Encryption: {}\n\
+             Test Mode: {}",
+            config.user.name,
+            config.network.default_port,
+            config.storage.data_dir.display(),
+            if config.crypto.encryption_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            },
+            if config.network.test_mode {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )
     }
 }

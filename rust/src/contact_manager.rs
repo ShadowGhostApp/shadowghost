@@ -75,7 +75,6 @@ impl ContactManager {
         let encoded = general_purpose::URL_SAFE_NO_PAD.encode(data.as_bytes());
         log::debug!("Generated base64: {}", encoded);
 
-        // Тестируем декодирование сразу после генерации
         match general_purpose::URL_SAFE_NO_PAD.decode(&encoded) {
             Ok(test_decoded) => match String::from_utf8(test_decoded) {
                 Ok(test_json) => {
@@ -139,7 +138,6 @@ impl ContactManager {
         log::debug!("Extracted encoded part: '{}'", encoded);
         log::debug!("Encoded length: {}", encoded.len());
 
-        // Проверяем, что encoded часть содержит только валидные base64 символы
         let valid_chars = encoded.chars().all(|c| {
             c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '-' || c == '_'
         });
@@ -158,7 +156,6 @@ impl ContactManager {
             &decoded_bytes[..std::cmp::min(decoded_bytes.len(), 20)]
         );
 
-        // Проверяем, начинается ли декодированная строка с '{' (JSON)
         if decoded_bytes.is_empty() || decoded_bytes[0] != b'{' {
             log::error!("Decoded data doesn't start with JSON object");
             return Err(ContactError::DecodeError(
@@ -166,7 +163,6 @@ impl ContactManager {
             ));
         }
 
-        // Проверяем, что все байты являются валидными UTF-8 символами
         match std::str::from_utf8(&decoded_bytes) {
             Ok(data_str) => {
                 log::debug!("Successfully converted to UTF-8: {}", data_str);
@@ -185,11 +181,13 @@ impl ContactManager {
                 let contact = Contact {
                     id: peer_data.id.clone(),
                     name: peer_data.name.clone(),
-                    address: peer_data.address,
+                    address: peer_data.address.clone(),
                     status: ContactStatus::Offline,
                     trust_level: TrustLevel::Low,
                     last_seen: peer_data.connected_at,
                 };
+
+                log::info!("Contact address preserved: {}", peer_data.address);
 
                 {
                     let mut contacts = self.contacts.write().await;
@@ -222,7 +220,6 @@ impl ContactManager {
                 log::error!("UTF-8 conversion failed: {}", utf8_error);
                 log::error!("Invalid UTF-8 bytes: {:?}", &decoded_bytes);
 
-                // Пытаемся найти где именно проблема
                 for (i, &byte) in decoded_bytes.iter().enumerate() {
                     if byte > 127 {
                         log::error!("Non-ASCII byte at position {}: 0x{:02x}", i, byte);
@@ -305,6 +302,23 @@ impl ContactManager {
     pub async fn get_contact_by_id(&self, id: &str) -> Option<Contact> {
         let contacts = self.contacts.read().await;
         contacts.get(id).cloned()
+    }
+
+    pub async fn check_contact_online(&self, contact_name: &str) -> bool {
+        if let Some(contact) = self.get_contact_by_name(contact_name).await {
+            use std::time::Duration;
+            use tokio::net::TcpStream;
+
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                TcpStream::connect(&contact.address),
+            )
+            .await;
+
+            matches!(result, Ok(Ok(_)))
+        } else {
+            false
+        }
     }
 
     pub async fn block_contact(&self, contact_id: &str) -> Result<(), ContactError> {

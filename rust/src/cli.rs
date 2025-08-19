@@ -12,17 +12,15 @@ impl CliInterface {
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         println!("🌟 Shadow Ghost Messenger v0.1.0");
-        println!("Введите 'help' для просмотра доступных команд");
+        println!("Type 'help' to see available commands");
         println!();
 
-        if let Some(peer_info) = self.core.get_peer_info() {
-            println!("👤 Готов как: {}", peer_info);
+        if let Some(peer_info) = self.core.get_peer_info().await {
+            println!("👤 Ready as: {}", peer_info);
         }
 
         if !self.core.is_server_started() {
-            println!(
-                "⚠️  Сервер еще не запущен. Используйте команду 'start' для приема соединений."
-            );
+            println!("⚠️ Server not started yet. Use 'start' command to receive connections.");
         }
 
         let event_bus = self.core.get_event_bus().clone();
@@ -33,22 +31,22 @@ impl CliInterface {
                     crate::events::AppEvent::Network(net_event) => match net_event {
                         crate::events::NetworkEvent::MessageReceived { message } => {
                             println!(
-                                "\n💬 Новое сообщение от {}: {}",
+                                "\n💬 New message from {}: {}",
                                 message.from, message.content
                             );
                             print!("> ");
                             io::stdout().flush().unwrap();
                         }
                         crate::events::NetworkEvent::ContactAdded { contact } => {
-                            println!("\n👥 Добавлен новый контакт: {}", contact.name);
+                            println!("\n👥 New contact added: {}", contact.name);
                             print!("> ");
                             io::stdout().flush().unwrap();
                         }
                         crate::events::NetworkEvent::Error { error, context } => {
                             if let Some(ctx) = context {
-                                println!("\n❌ Ошибка [{}]: {}", ctx, error);
+                                println!("\n❌ Error [{}]: {}", ctx, error);
                             } else {
-                                println!("\n❌ Ошибка: {}", error);
+                                println!("\n❌ Error: {}", error);
                             }
                             print!("> ");
                             io::stdout().flush().unwrap();
@@ -73,29 +71,32 @@ impl CliInterface {
             let args = if parts.len() > 1 { parts[1] } else { "" };
 
             match command.as_str() {
-                "help" | "помощь" => self.show_help(),
-                "link" | "ссылка" => self.handle_link_command().await?,
-                "contacts" | "контакты" => self.list_contacts().await?,
-                "init" | "инит" => self.initialize_core().await?,
-                "start" | "запуск" => self.start_server().await?,
-                "stop" | "остановка" => self.stop_server().await?,
-                "restart" | "перезапуск" => self.restart_server().await?,
-                "quit" | "exit" | "q" | "выход" => {
-                    println!("👋 До свидания!");
+                "help" => self.show_help(),
+                "link" => self.handle_link_command().await?,
+                "contacts" => self.list_contacts().await?,
+                "init" => self.initialize_core().await?,
+                "start" => self.start_server().await?,
+                "stop" => self.stop_server().await?,
+                "restart" => self.restart_server().await?,
+                "quit" | "exit" | "q" => {
+                    println!("👋 Goodbye!");
                     break;
                 }
-                "chat" | "чат" => self.handle_chat_command(args).await?,
-                "add" | "добавить" => self.handle_add_command(args).await?,
-                "ping" | "пинг" => self.handle_ping_command(args).await?,
-                "status" | "статус" => self.show_status().await?,
-                "stats" | "статистика" => self.show_network_stats().await?,
-                "clear" | "очистить" => {
+                "chat" => self.handle_chat_command(args).await?,
+                "add" => self.handle_add_command(args).await?,
+                "ping" => self.handle_ping_command(args).await?,
+                "status" => self.show_status().await?,
+                "stats" => self.show_network_stats().await?,
+                "name" => self.handle_name_command(args).await?,
+                "connection" => self.handle_connection_command().await?,
+                "update-ip" => self.handle_update_ip_command().await?,
+                "clear" => {
                     print!("\x1B[2J\x1B[1;1H");
                     io::stdout().flush()?;
                 }
                 "" => continue,
                 _ => println!(
-                    "❓ Неизвестная команда '{}'. Введите 'help' для просмотра доступных команд.",
+                    "❓ Unknown command '{}'. Type 'help' to see available commands.",
                     command
                 ),
             }
@@ -105,37 +106,83 @@ impl CliInterface {
         Ok(())
     }
 
+    async fn handle_connection_command(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.core.is_initialized() {
+            println!("❌ Error: System not initialized. Execute 'init' first.");
+            return Ok(());
+        }
+
+        match self.core.get_connection_info().await {
+            Ok(info) => {
+                println!("\n🔗 Connection Information:");
+                println!("{}", "═".repeat(50));
+                for line in info.lines() {
+                    println!("  {}", line);
+                }
+                println!("{}", "═".repeat(50));
+                println!("💡 Share your SG link (use 'link' command) for others to connect");
+            }
+            Err(e) => println!("❌ Error getting connection info: {}", e),
+        }
+
+        Ok(())
+    }
+
+    async fn handle_update_ip_command(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.core.is_initialized() {
+            println!("❌ Error: System not initialized. Execute 'init' first.");
+            return Ok(());
+        }
+
+        print!("🔄 Updating external IP address...");
+        io::stdout().flush()?;
+
+        match self.core.update_external_address().await {
+            Ok(()) => {
+                println!(" ✅ External IP updated successfully!");
+                println!("💡 Use 'connection' command to see current addresses");
+                println!("⚠️ You may need to share a new SG link if your IP changed");
+            }
+            Err(e) => println!(" ❌ Error updating IP: {}", e),
+        }
+
+        Ok(())
+    }
+
     fn show_help(&self) {
-        println!("\n📋 Доступные команды:");
-        println!("┌─────────────────────────┬───────────────────────────────────────────────┐");
-        println!("│ Команда                 │ Описание                                    │");
-        println!("├─────────────────────────┼───────────────────────────────────────────────┤");
-        println!("│ init                    │ Инициализировать приложение                 │");
-        println!("│ start                   │ Запустить сервер (необходимо для приема)   │");
-        println!("│ stop                    │ Остановить сервер                           │");
-        println!("│ restart                 │ Перезапустить сервер                        │");
-        println!("│ link                    │ Создать вашу ссылку для подключения        │");
-        println!("│ add <sg-ссылка>         │ Добавить контакт по SG ссылке               │");
-        println!("│ contacts                │ Показать все контакты                       │");
-        println!("│ chat <имя-контакта>     │ Войти в чат с контактом                     │");
-        println!("│ ping <имя-контакта>     │ Проверить, онлайн ли контакт                │");
-        println!("│ status                  │ Показать текущий статус                     │");
-        println!("│ stats                   │ Показать сетевую статистику                 │");
-        println!("│ clear                   │ Очистить экран                              │");
-        println!("│ help                    │ Показать эту справку                        │");
-        println!("│ quit/exit/q             │ Выйти из приложения                         │");
-        println!("└─────────────────────────┴───────────────────────────────────────────────┘");
+        println!("\n📋 Available commands:");
+        println!("┌─────────────────────────┬──────────────────────────────────────────────┐");
+        println!("│ Command                 │ Description                                  │");
+        println!("├─────────────────────────┼──────────────────────────────────────────────┤");
+        println!("│ init                    │ Initialize application                       │");
+        println!("│ start                   │ Start server (required for receiving)       │");
+        println!("│ stop                    │ Stop server                                  │");
+        println!("│ restart                 │ Restart server                               │");
+        println!("│ link                    │ Generate your connection link                │");
+        println!("│ add <sg-link>           │ Add contact by SG link                       │");
+        println!("│ contacts                │ Show all contacts                            │");
+        println!("│ chat <contact-name>     │ Enter chat with contact                      │");
+        println!("│ ping <contact-name>     │ Check if contact is online                   │");
+        println!("│ status                  │ Show current status                          │");
+        println!("│ stats                   │ Show network statistics                      │");
+        println!("│ name <new-name>         │ Change your name                             │");
+        println!("│ connection              │ Show connection information                  │");
+        println!("│ update-ip               │ Update external IP address                   │");
+        println!("│ clear                   │ Clear screen                                 │");
+        println!("│ help                    │ Show this help                               │");
+        println!("│ quit/exit/q             │ Exit application                             │");
+        println!("└─────────────────────────┴──────────────────────────────────────────────┘");
     }
 
     async fn handle_link_command(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         match self.core.generate_sg_link().await {
             Ok(link) => self.display_link_for_copying(&link),
-            Err(e) => println!("❌ Ошибка создания ссылки: {}", e),
+            Err(e) => println!("❌ Error creating link: {}", e),
         }
 
         Ok(())
@@ -143,31 +190,31 @@ impl CliInterface {
 
     fn display_link_for_copying(&self, link: &str) {
         println!("\n{}", "═".repeat(80));
-        println!("🔗 ВАША ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ:");
+        println!("🔗 YOUR CONNECTION LINK:");
         println!("{}", "═".repeat(80));
         println!();
         println!("   {}", link);
         println!();
         println!("{}", "═".repeat(80));
-        println!("📋 ИНСТРУКЦИИ:");
-        println!("1. Выделите ссылку выше мышью (тройной клик для выделения всего)");
-        println!("2. Скопируйте с помощью Ctrl+C (Windows/Linux) или Cmd+C (Mac)");
-        println!("3. Отправьте эту ссылку человеку, с которым хотите связаться");
-        println!("4. Они должны использовать команду 'add <ваша-ссылка>' для добавления вас");
+        println!("📋 INSTRUCTIONS:");
+        println!("1. Select the link above with mouse (triple-click to select all)");
+        println!("2. Copy with Ctrl+C (Windows/Linux) or Cmd+C (Mac)");
+        println!("3. Send this link to the person you want to connect with");
+        println!("4. They should use 'add <your-link>' command to add you");
         println!("{}", "═".repeat(80));
         println!();
 
-        print!("Нажмите Enter для продолжения...");
+        print!("Press Enter to continue...");
         io::stdout().flush().unwrap();
 
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
 
-        println!("💡 Ссылка все еще доступна выше, если нужно скопировать ее снова.");
+        println!("💡 Link is still available above if you need to copy it again.");
     }
 
     async fn initialize_core(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        print!("Введите ваше имя (по умолчанию: user): ");
+        print!("Enter your name (default: user): ");
         io::stdout().flush()?;
 
         let mut name = String::new();
@@ -182,12 +229,12 @@ impl CliInterface {
 
         match self.core.initialize(user_name).await {
             Ok(()) => {
-                println!("✅ Система успешно инициализирована!");
-                if let Some(peer_info) = self.core.get_peer_info() {
-                    println!("👤 Вы теперь: {}", peer_info);
+                println!("✅ System initialized successfully!");
+                if let Some(peer_info) = self.core.get_peer_info().await {
+                    println!("👤 You are now: {}", peer_info);
                 }
             }
-            Err(e) => println!("❌ Ошибка инициализации: {}", e),
+            Err(e) => println!("❌ Initialization error: {}", e),
         }
 
         Ok(())
@@ -195,24 +242,24 @@ impl CliInterface {
 
     async fn start_server(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if self.core.is_server_started() {
-            println!("ℹ️  Сервер уже работает.");
+            println!("ℹ️ Server is already running.");
             return Ok(());
         }
 
-        print!("🚀 Запуск сервера...");
+        print!("🚀 Starting server...");
         io::stdout().flush()?;
 
         match self.core.start_server().await {
             Ok(()) => {
-                println!(" ✅ Сервер успешно запущен!");
-                println!("📨 Теперь вы можете получать сообщения от других пользователей.");
+                println!(" ✅ Server started successfully!");
+                println!("📨 You can now receive messages from other users.");
             }
-            Err(e) => println!(" ❌ Ошибка запуска сервера: {}", e),
+            Err(e) => println!(" ❌ Server start error: {}", e),
         }
 
         Ok(())
@@ -220,24 +267,24 @@ impl CliInterface {
 
     async fn stop_server(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована.");
+            println!("❌ Error: System not initialized.");
             return Ok(());
         }
 
         if !self.core.is_server_started() {
-            println!("ℹ️  Сервер уже остановлен.");
+            println!("ℹ️ Server is already stopped.");
             return Ok(());
         }
 
-        print!("🛑 Остановка сервера...");
+        print!("🛑 Stopping server...");
         io::stdout().flush()?;
 
         match self.core.stop_server().await {
             Ok(()) => {
-                println!(" ✅ Сервер успешно остановлен!");
-                println!("⚠️  Вы больше не будете получать сообщения до перезапуска.");
+                println!(" ✅ Server stopped successfully!");
+                println!("⚠️ You will no longer receive messages until restart.");
             }
-            Err(e) => println!(" ❌ Ошибка остановки сервера: {}", e),
+            Err(e) => println!(" ❌ Server stop error: {}", e),
         }
 
         Ok(())
@@ -245,82 +292,84 @@ impl CliInterface {
 
     async fn restart_server(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
-        print!("🔄 Перезапуск сервера...");
+        print!("🔄 Restarting server...");
         io::stdout().flush()?;
 
         match self.core.restart_server().await {
             Ok(()) => {
-                println!(" ✅ Сервер успешно перезапущен!");
+                println!(" ✅ Server restarted successfully!");
             }
-            Err(e) => println!(" ❌ Ошибка перезапуска сервера: {}", e),
+            Err(e) => println!(" ❌ Server restart error: {}", e),
         }
 
         Ok(())
     }
 
     async fn show_status(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("\n📊 Текущий статус:");
-        println!("┌─────────────────────┬─────────────────────────────────┐");
+        println!("\n📊 Current status:");
+        println!("┌─────────────────────┬──────────────────────────────────┐");
 
         let init_status = if self.core.is_initialized() {
-            "✅ Да"
+            "✅ Yes"
         } else {
-            "❌ Нет"
+            "❌ No"
         };
-        println!("│ Инициализировано    │ {:<31} │", init_status);
+        println!("│ Initialized         │ {:<31} │", init_status);
 
         let server_status = self.core.get_server_status().await;
-        println!("│ Сервер              │ {:<31} │", server_status);
+        println!("│ Server              │ {:<31} │", server_status);
 
-        if let Some(peer_info) = self.core.get_peer_info() {
-            println!("│ Идентификация       │ {:<31} │", peer_info);
+        if let Some(peer_info) = self.core.get_peer_info().await {
+            println!("│ Identity            │ {:<31} │", peer_info);
         }
 
         if self.core.is_initialized() {
             match self.core.get_contacts().await {
                 Ok(contacts) => {
-                    let online_count = contacts
-                        .iter()
-                        .filter(|c| matches!(c.status, crate::network::ContactStatus::Online))
-                        .count();
+                    let mut online_count = 0;
+                    for contact in &contacts {
+                        if self.core.check_contact_online(&contact.name).await {
+                            online_count += 1;
+                        }
+                    }
                     println!(
-                        "│ Контакты            │ {} (онлайн: {})              │",
+                        "│ Contacts            │ {} (online: {})              │",
                         contacts.len(),
                         online_count
                     );
                 }
-                Err(_) => println!("│ Контакты            │ Ошибка загрузки                 │"),
+                Err(_) => println!("│ Contacts            │ Load error                       │"),
             }
         }
 
-        println!("└─────────────────────┴─────────────────────────────────┘");
+        println!("└─────────────────────┴──────────────────────────────────┘");
 
         Ok(())
     }
 
     async fn show_network_stats(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована.");
+            println!("❌ Error: System not initialized.");
             return Ok(());
         }
 
         match self.core.get_network_stats().await {
             Ok(stats) => {
-                println!("\n📈 Сетевая статистика:");
-                println!("┌─────────────────────┬─────────────────────┐");
-                println!("│ Отправлено сообщений│ {:<19} │", stats.messages_sent);
-                println!("│ Получено сообщений  │ {:<19} │", stats.messages_received);
-                println!("│ Отправлено байт     │ {:<19} │", stats.bytes_sent);
-                println!("│ Получено байт       │ {:<19} │", stats.bytes_received);
-                println!("│ Всего соединений    │ {:<19} │", stats.total_connections);
-                println!("│ Активных соединений │ {:<19} │", stats.active_connections);
-                println!("└─────────────────────┴─────────────────────┘");
+                println!("\n📈 Network statistics:");
+                println!("┌─────────────────────┬──────────────────────┐");
+                println!("│ Messages sent       │ {:<19} │", stats.messages_sent);
+                println!("│ Messages received   │ {:<19} │", stats.messages_received);
+                println!("│ Bytes sent          │ {:<19} │", stats.bytes_sent);
+                println!("│ Bytes received      │ {:<19} │", stats.bytes_received);
+                println!("│ Total connections   │ {:<19} │", stats.total_connections);
+                println!("│ Active connections  │ {:<19} │", stats.active_connections);
+                println!("└─────────────────────┴──────────────────────┘");
             }
-            Err(e) => println!("❌ Ошибка получения статистики: {}", e),
+            Err(e) => println!("❌ Error getting statistics: {}", e),
         }
 
         Ok(())
@@ -328,55 +377,55 @@ impl CliInterface {
 
     async fn handle_add_command(&self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if args.is_empty() {
-            println!("💡 Использование: add <sg-ссылка>");
+            println!("💡 Usage: add <sg-link>");
             return Ok(());
         }
 
         let sg_link = args.trim();
 
         if !sg_link.starts_with("sg://") {
-            println!("❌ Ошибка: Неверный формат SG ссылки. Ссылка должна начинаться с 'sg://'");
+            println!("❌ Error: Invalid SG link format. Link must start with 'sg://'");
             return Ok(());
         }
 
         if sg_link.len() < 10 {
-            println!("❌ Ошибка: SG ссылка слишком короткая для корректной");
+            println!("❌ Error: SG link too short to be valid");
             return Ok(());
         }
 
-        print!("🔄 Обработка SG ссылки...");
+        print!("🔄 Processing SG link...");
         io::stdout().flush()?;
 
         match self.core.add_contact_by_sg_link(sg_link).await {
             Ok(()) => {
-                println!(" ✅ Контакт успешно добавлен!");
-                println!("💡 Используйте команду 'contacts' для просмотра всех контактов, или 'chat <имя>' для начала чата.");
+                println!(" ✅ Contact added successfully!");
+                println!("💡 Use 'contacts' command to view all contacts, or 'chat <name>' to start chatting.");
             }
             Err(e) => match e {
                 crate::core::CoreError::Contact(msg) => {
                     if msg.contains("UTF-8 conversion failed") {
-                        println!(" ❌ Ошибка: SG ссылка повреждена или недействительна");
-                        println!("Попросите контакт создать новую ссылку");
+                        println!(" ❌ Error: SG link is corrupted or invalid");
+                        println!("Ask the contact to create a new link");
                     } else if msg.contains("Decode error") {
-                        println!(" ❌ Ошибка: Не удалось декодировать SG ссылку");
-                        println!("Проверьте, что ссылка была скопирована правильно");
+                        println!(" ❌ Error: Failed to decode SG link");
+                        println!("Check that the link was copied correctly");
                     } else if msg.contains("Cannot add yourself") {
-                        println!(" ❌ Ошибка: Вы не можете добавить себя в качестве контакта");
+                        println!(" ❌ Error: You cannot add yourself as a contact");
                     } else if msg.contains("already exists") {
-                        println!(" ℹ️  Примечание: Контакт уже существует, обновлена существующая запись");
+                        println!(" ℹ️ Note: Contact already exists, updated existing record");
                     } else if msg.contains("JSON parse failed") {
-                        println!(" ❌ Ошибка: SG ссылка содержит недействительные данные");
-                        println!("Попросите контакт создать новую ссылку");
+                        println!(" ❌ Error: SG link contains invalid data");
+                        println!("Ask the contact to create a new link");
                     } else {
-                        println!(" ❌ Ошибка контакта: {}", msg);
+                        println!(" ❌ Contact error: {}", msg);
                     }
                 }
-                _ => println!(" ❌ Ошибка добавления контакта: {}", e),
+                _ => println!(" ❌ Error adding contact: {}", e),
             },
         }
 
@@ -385,29 +434,30 @@ impl CliInterface {
 
     async fn list_contacts(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         match self.core.get_contacts().await {
             Ok(contacts) => {
                 if contacts.is_empty() {
-                    println!("🔭 Контакты не найдены. Используйте 'add <sg-ссылка>' для добавления контактов.");
+                    println!("🔭 No contacts found. Use 'add <sg-link>' to add contacts.");
                 } else {
-                    println!("\n👥 Ваши контакты:");
+                    println!("\n👥 Your contacts:");
                     println!("{}", "═".repeat(80));
                     for contact in contacts {
-                        let status = match contact.status {
-                            crate::network::ContactStatus::Online => "🟢 Онлайн",
-                            crate::network::ContactStatus::Offline => "🔴 Оффлайн",
-                            crate::network::ContactStatus::Blocked => "🚫 Заблокирован",
+                        let is_online = self.core.check_contact_online(&contact.name).await;
+                        let status = if is_online {
+                            "🟢 Online"
+                        } else {
+                            "🔴 Offline"
                         };
 
                         let message_count =
                             match self.core.get_unread_message_count(&contact.name).await {
                                 Ok(count) => {
                                     if count > 0 {
-                                        format!(" 💬 ({} сообщений)", count)
+                                        format!(" 💬 ({} messages)", count)
                                     } else {
                                         String::new()
                                     }
@@ -421,10 +471,10 @@ impl CliInterface {
                         );
                     }
                     println!("{}", "═".repeat(80));
-                    println!("💡 Используйте 'chat <имя-контакта>' для начала чата");
+                    println!("💡 Use 'chat <contact-name>' to start chatting");
                 }
             }
-            Err(e) => println!("❌ Ошибка получения контактов: {}", e),
+            Err(e) => println!("❌ Error getting contacts: {}", e),
         }
 
         Ok(())
@@ -432,12 +482,12 @@ impl CliInterface {
 
     async fn handle_chat_command(&self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if args.is_empty() {
-            println!("💡 Использование: chat <имя-контакта>");
+            println!("💡 Usage: chat <contact-name>");
             return Ok(());
         }
 
@@ -446,21 +496,30 @@ impl CliInterface {
         match self.core.get_contacts().await {
             Ok(contacts) => {
                 if !contacts.iter().any(|c| c.name == contact_name) {
-                    println!("❌ Ошибка: Контакт '{}' не найден", contact_name);
-                    println!("💡 Используйте команду 'contacts' для просмотра доступных контактов");
+                    println!("❌ Error: Contact '{}' not found", contact_name);
+                    println!("💡 Use 'contacts' command to view available contacts");
                     return Ok(());
                 }
 
-                println!(
-                    "💬 Вход в чат с {} (введите 'exit' для выхода)",
-                    contact_name
-                );
-                println!("💡 Специальные команды в чате:");
-                println!("   /history - показать полную историю");
-                println!("   exit - выйти из чата");
+                let is_online = self.core.check_contact_online(contact_name).await;
+                let status_msg = if is_online {
+                    "🟢 Online"
+                } else {
+                    "🔴 Offline"
+                };
+
+                println!("💬 Entering chat with {} ({})", contact_name, status_msg);
+                if !is_online {
+                    println!(
+                        "⚠️ Contact is offline. Messages will be delivered when they come online."
+                    );
+                }
+                println!("💡 Special chat commands:");
+                println!("   /history - show full history");
+                println!("   exit - exit chat");
 
                 if !self.core.is_server_started() {
-                    println!("⚠️  Предупреждение: Сервер не запущен. Вы не будете получать ответы до выполнения команды 'start'");
+                    println!("⚠️ Warning: Server not running. You won't receive replies until you execute 'start' command");
                 }
 
                 self.show_chat_history(contact_name).await;
@@ -478,7 +537,7 @@ impl CliInterface {
                     }
 
                     if message.to_lowercase() == "exit" {
-                        println!("👋 Выход из чата с {}", contact_name);
+                        println!("👋 Exiting chat with {}", contact_name);
                         break;
                     }
 
@@ -489,32 +548,33 @@ impl CliInterface {
 
                     match self.core.send_message(contact_name, message).await {
                         Ok(()) => {
-                            println!("✅ Отправлено");
+                            println!("✅ Sent");
                         }
                         Err(e) => match e {
                             crate::core::CoreError::InvalidState(msg)
-                                if msg.contains("Сервер не запущен") =>
+                                if msg.contains("Server not running") =>
                             {
-                                println!("❌ Ошибка: Сервер не запущен. Сначала используйте команду 'start'.");
+                                println!(
+                                    "❌ Error: Server not running. Execute 'start' command first."
+                                );
                             }
                             crate::core::CoreError::Network(msg) => {
-                                if msg.contains("Connection refused") || msg.contains("недоступен")
+                                if msg.contains("Connection refused") || msg.contains("unavailable")
                                 {
-                                    println!("❌ Неудача: {} недоступен", contact_name);
-                                    println!("  (Возможно, они еще не запустили свой сервер)");
-                                } else if msg.contains("timeout") || msg.contains("Таймаут")
-                                {
-                                    println!("❌ Неудача: Таймаут соединения");
+                                    println!("❌ Failed: {} unavailable", contact_name);
+                                    println!("  (They may not have started their server yet)");
+                                } else if msg.contains("timeout") {
+                                    println!("❌ Failed: Connection timeout");
                                 } else {
-                                    println!("❌ Неудача: {}", msg);
+                                    println!("❌ Failed: {}", msg);
                                 }
                             }
-                            _ => println!("❌ Неудача: {}", e),
+                            _ => println!("❌ Failed: {}", e),
                         },
                     }
                 }
             }
-            Err(e) => println!("❌ Ошибка получения контактов: {}", e),
+            Err(e) => println!("❌ Error getting contacts: {}", e),
         }
 
         Ok(())
@@ -524,10 +584,10 @@ impl CliInterface {
         match self.core.get_chat_messages(contact_name).await {
             Ok(messages) => {
                 if messages.is_empty() {
-                    println!("🔭 Нет предыдущих сообщений с {}", contact_name);
+                    println!("🔭 No previous messages with {}", contact_name);
                 } else {
                     println!("\n{}", "═".repeat(60));
-                    println!("💬 История чата с {}", contact_name);
+                    println!("💬 Chat history with {}", contact_name);
                     println!("{}", "═".repeat(60));
 
                     for msg in messages.iter().rev().take(10).rev() {
@@ -549,7 +609,7 @@ impl CliInterface {
 
                     if messages.len() > 10 {
                         println!(
-                            "... (еще {} сообщений, введите '/history' для полной истории)",
+                            "... ({} more messages, type '/history' for full history)",
                             messages.len() - 10
                         );
                     }
@@ -557,24 +617,24 @@ impl CliInterface {
                     println!("{}", "═".repeat(60));
                 }
             }
-            Err(e) => println!("❌ Ошибка загрузки истории чата: {}", e),
+            Err(e) => println!("❌ Error loading chat history: {}", e),
         }
     }
 
     async fn handle_ping_command(&self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !self.core.is_initialized() {
-            println!("❌ Ошибка: Система не инициализирована. Сначала выполните 'init'.");
+            println!("❌ Error: System not initialized. Execute 'init' first.");
             return Ok(());
         }
 
         if args.is_empty() {
-            println!("💡 Использование: ping <имя-контакта>");
+            println!("💡 Usage: ping <contact-name>");
             return Ok(());
         }
 
         let contact_name = args.trim();
 
-        print!("🔍 Пинг {}...", contact_name);
+        print!("🔍 Pinging {}...", contact_name);
         io::stdout().flush()?;
 
         match self.core.get_contacts().await {
@@ -593,21 +653,42 @@ impl CliInterface {
                     match result {
                         Ok(Ok(_)) => {
                             let elapsed = start.elapsed();
-                            println!(" ✅ {} онлайн ({}мс)", contact_name, elapsed.as_millis());
+                            println!(" ✅ {} is online ({}ms)", contact_name, elapsed.as_millis());
                         }
                         Ok(Err(_)) => {
-                            println!(" ❌ {} недоступен", contact_name);
-                            println!("  💡 (Проверьте, запустили ли они сервер командой 'start')");
+                            println!(" ❌ {} unavailable", contact_name);
+                            println!(
+                                "  💡 (Check if they started their server with 'start' command)"
+                            );
                         }
                         Err(_) => {
-                            println!(" ⏰ {} таймаут соединения", contact_name);
+                            println!(" ⏰ {} connection timeout", contact_name);
                         }
                     }
                 } else {
-                    println!(" ❌ Контакт '{}' не найден", contact_name);
+                    println!(" ❌ Contact '{}' not found", contact_name);
                 }
             }
-            Err(e) => println!(" ❌ Ошибка получения контактов: {}", e),
+            Err(e) => println!(" ❌ Error getting contacts: {}", e),
+        }
+
+        Ok(())
+    }
+
+    async fn handle_name_command(&mut self, args: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if args.is_empty() {
+            println!("💡 Usage: name <new-name>");
+            return Ok(());
+        }
+
+        let new_name = args.trim().to_string();
+
+        match self.core.update_user_name(new_name.clone()).await {
+            Ok(()) => {
+                println!("✅ Name updated to '{}'", new_name);
+                println!("💡 Your new identity will be used for new connections");
+            }
+            Err(e) => println!("❌ Error updating name: {}", e),
         }
 
         Ok(())

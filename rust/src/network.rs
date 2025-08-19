@@ -90,13 +90,12 @@ pub struct NetworkMessage {
 
 #[derive(Clone)]
 pub struct NetworkManager {
-    peer: Peer,
+    peer: Arc<RwLock<Peer>>,
     chats: Arc<RwLock<HashMap<String, Vec<ChatMessage>>>>,
     crypto: Arc<RwLock<CryptoManager>>,
     pub event_bus: EventBus,
     stats: Arc<RwLock<NetworkStats>>,
     blocked_peers: Arc<RwLock<HashMap<String, bool>>>,
-    // Добавляем поля для управления shutdown
     shutdown_signal: Arc<Notify>,
     is_running: Arc<AtomicBool>,
     server_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
@@ -107,7 +106,7 @@ impl NetworkManager {
         let crypto = CryptoManager::new()?;
 
         Ok(Self {
-            peer,
+            peer: Arc::new(RwLock::new(peer)),
             chats: Arc::new(RwLock::new(HashMap::new())),
             crypto: Arc::new(RwLock::new(crypto)),
             event_bus,
@@ -119,8 +118,19 @@ impl NetworkManager {
         })
     }
 
-    pub fn get_peer(&self) -> &Peer {
-        &self.peer
+    pub async fn get_peer(&self) -> Peer {
+        let peer = self.peer.read().await;
+        peer.clone()
+    }
+
+    pub async fn update_peer_name(&self, new_name: String) {
+        let mut peer = self.peer.write().await;
+        peer.name = new_name;
+    }
+
+    pub async fn update_peer_address(&self, new_address: String) {
+        let mut peer = self.peer.write().await;
+        peer.address = new_address;
     }
 
     pub fn get_crypto(&self) -> Arc<RwLock<CryptoManager>> {
@@ -136,11 +146,12 @@ impl NetworkManager {
         self.is_running.load(Ordering::Relaxed)
     }
 
-    fn create_chat_key(&self, contact_name: &str) -> String {
-        if self.peer.name.as_str() < contact_name {
-            format!("{}_{}", self.peer.name, contact_name)
+    async fn create_chat_key(&self, contact_name: &str) -> String {
+        let peer = self.peer.read().await;
+        if peer.name.as_str() < contact_name {
+            format!("{}_{}", peer.name, contact_name)
         } else {
-            format!("{}_{}", contact_name, self.peer.name)
+            format!("{}_{}", contact_name, peer.name)
         }
     }
 
@@ -159,28 +170,24 @@ impl NetworkManager {
         self.event_bus
             .emit_network(crate::events::NetworkEvent::ServerStarted { port });
 
-        // Клонируем необходимые данные для background task
         let manager = self.clone();
         let contacts_ref = contacts.clone();
         let shutdown_signal = self.shutdown_signal.clone();
         let is_running = self.is_running.clone();
 
-        // Создаем server task
         let handle = tokio::spawn(async move {
-            println!("🚀 Сервер запущен на порту {}", port);
+            println!("🚀 Server started on port {}", port);
 
             loop {
                 tokio::select! {
-                    // Ожидаем новые соединения
                     accept_result = listener.accept() => {
                         match accept_result {
                             Ok((stream, addr)) => {
-                                println!("📞 Новое соединение от {}", addr);
+                                println!("📞 New connection from {}", addr);
 
                                 let manager_clone = manager.clone();
                                 let contacts_clone = contacts_ref.clone();
 
-                                // Обрабатываем соединение в отдельном task
                                 tokio::spawn(async move {
                                     if let Err(e) = manager_clone.handle_connection(stream, contacts_clone).await {
                                         manager_clone
@@ -193,24 +200,22 @@ impl NetworkManager {
                                 });
                             }
                             Err(e) => {
-                                eprintln!("❌ Ошибка принятия соединения: {}", e);
+                                eprintln!("❌ Error accepting connection: {}", e);
                                 break;
                             }
                         }
                     }
-                    // Ожидаем сигнал shutdown
                     _ = shutdown_signal.notified() => {
-                        println!("🛑 Получен сигнал остановки сервера");
+                        println!("🛑 Received server shutdown signal");
                         break;
                     }
                 }
             }
 
             is_running.store(false, Ordering::Relaxed);
-            println!("✅ Сервер остановлен");
+            println!("✅ Server stopped");
         });
 
-        // Сохраняем handle для возможности отмены
         {
             let mut server_handle = self.server_handle.write().await;
             *server_handle = Some(handle);
@@ -219,19 +224,16 @@ impl NetworkManager {
         Ok(())
     }
 
-    // Новый метод shutdown
     pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_running.load(Ordering::Relaxed) {
-            println!("⚠️ Сервер уже остановлен");
+            println!("⚠️ Server already stopped");
             return Ok(());
         }
 
-        println!("🛑 Останавливаем сервер...");
+        println!("🛑 Stopping server...");
 
-        // Отправляем сигнал остановки
         self.shutdown_signal.notify_one();
 
-        // Ждем завершения server task
         let handle = {
             let mut server_handle = self.server_handle.write().await;
             server_handle.take()
@@ -239,7 +241,7 @@ impl NetworkManager {
 
         if let Some(handle) = handle {
             if let Err(e) = handle.await {
-                eprintln!("❌ Ошибка при остановке сервера: {}", e);
+                eprintln!("❌ Error stopping server: {}", e);
             }
         }
 
@@ -251,7 +253,7 @@ impl NetworkManager {
                 context: Some("Shutdown".to_string()),
             });
 
-        println!("✅ Сервер успешно остановлен");
+        println!("✅ Server shutdown complete");
         Ok(())
     }
 
@@ -268,16 +270,14 @@ impl NetworkManager {
             Ok(Ok(n)) if n > 0 => {
                 if let Ok(message) = serde_json::from_slice::<NetworkMessage>(&buffer[..n]) {
                     if self.is_peer_blocked(&message.sender_id).await {
-                        println!(
-                            "🚫 Сообщение от заблокированного пользователя: {}",
-                            message.sender_id
-                        );
+                        println!("🚫 Message from blocked user: {}", message.sender_id);
                         return Ok(());
                     }
 
+                    let peer = self.peer.read().await;
                     Self::process_message(
                         &message,
-                        &self.peer,
+                        &peer,
                         contacts,
                         self.chats.clone(),
                         self.crypto.clone(),
@@ -285,20 +285,19 @@ impl NetworkManager {
                     )
                     .await?;
 
-                    // Обновляем статистику
                     let mut stats = self.stats.write().await;
                     stats.messages_received += 1;
                     stats.bytes_received += n as u64;
                 }
             }
             Ok(Ok(_)) => {
-                println!("⚠️ Получено пустое сообщение");
+                println!("⚠️ Received empty message");
             }
             Ok(Err(e)) => {
-                println!("❌ Ошибка чтения: {}", e);
+                println!("❌ Read error: {}", e);
             }
             Err(_) => {
-                println!("⏰ Таймаут при чтении сообщения");
+                println!("⏰ Timeout reading message");
             }
         }
 
@@ -338,7 +337,6 @@ impl NetworkManager {
                     delivery_status: DeliveryStatus::Delivered,
                 };
 
-                // Создаем консистентный ключ чата
                 let chat_key = if peer.name < sender_name {
                     format!("{}_{}", peer.name, sender_name)
                 } else {
@@ -353,7 +351,7 @@ impl NetworkManager {
                         .push(chat_message.clone());
                 }
 
-                println!("💬 Получено сообщение от {}: {}", sender_name, content);
+                println!("💬 Received message from {}: {}", sender_name, content);
 
                 event_bus.emit_network(crate::events::NetworkEvent::MessageReceived {
                     message: chat_message,
@@ -377,13 +375,13 @@ impl NetworkManager {
                     contacts_guard.insert(contact_data.id, contact.clone());
                 }
 
-                println!("🤝 Добавлен новый контакт: {}", contact_data.name);
+                println!("🤝 Added new contact: {}", contact_data.name);
 
                 event_bus.emit_network(crate::events::NetworkEvent::ContactAdded { contact });
             }
             _ => {
                 println!(
-                    "❓ Получен неизвестный тип сообщения: {:?}",
+                    "❓ Received unknown message type: {:?}",
                     message.message_type
                 );
             }
@@ -397,9 +395,10 @@ impl NetworkManager {
         contact: &Contact,
         content: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let peer = self.peer.read().await;
         let message = NetworkMessage {
             message_type: MessageType::TextMessage,
-            sender_id: self.peer.id.clone(),
+            sender_id: peer.id.clone(),
             recipient_id: contact.id.clone(),
             content: content.as_bytes().to_vec(),
             timestamp: std::time::SystemTime::now()
@@ -409,7 +408,7 @@ impl NetworkManager {
 
         let mut chat_message = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
-            from: self.peer.name.clone(),
+            from: peer.name.clone(),
             to: contact.name.clone(),
             content: content.to_string(),
             msg_type: ChatMessageType::Text,
@@ -417,14 +416,18 @@ impl NetworkManager {
             delivery_status: DeliveryStatus::Sent,
         };
 
-        let chat_key = self.create_chat_key(&contact.name);
+        let chat_key = if peer.name < contact.name {
+            format!("{}_{}", peer.name, contact.name)
+        } else {
+            format!("{}_{}", contact.name, peer.name)
+        };
 
-        println!("📤 Отправка сообщения для {}: {}", contact.name, content);
+        println!("📤 Sending message to {}: {}", contact.name, content);
 
         match Self::send_message_to_address(&contact.address, &message).await {
             Ok(_) => {
                 chat_message.delivery_status = DeliveryStatus::Delivered;
-                println!("✅ Сообщение доставлено для {}", contact.name);
+                println!("✅ Message delivered to {}", contact.name);
 
                 let mut stats = self.stats.write().await;
                 stats.messages_sent += 1;
@@ -432,28 +435,27 @@ impl NetworkManager {
             }
             Err(e) => {
                 chat_message.delivery_status = DeliveryStatus::Failed;
-                println!("❌ Ошибка отправки для {}: {}", contact.name, e);
+                println!("❌ Send error to {}: {}", contact.name, e);
 
                 let error_msg = if e.to_string().contains("Connection refused")
                     || e.to_string().contains("10061")
                 {
                     format!(
-                        "Не удалось подключиться к {}: Контакт недоступен",
+                        "Failed to connect to {}: Contact unavailable",
                         contact.address
                     )
                 } else if e.to_string().contains("timeout") {
-                    format!("Таймаут соединения с {}", contact.address)
+                    format!("Connection timeout with {}", contact.address)
                 } else {
-                    format!("Сетевая ошибка: {}", e)
+                    format!("Network error: {}", e)
                 };
 
                 self.event_bus
                     .emit_network(crate::events::NetworkEvent::Error {
                         error: error_msg.clone(),
-                        context: Some(format!("Отправка для {}", contact.name)),
+                        context: Some(format!("Send to {}", contact.name)),
                     });
 
-                // Сохраняем неудачное сообщение в историю
                 let mut chats = self.chats.write().await;
                 chats.entry(chat_key).or_default().push(chat_message);
 
@@ -461,7 +463,6 @@ impl NetworkManager {
             }
         }
 
-        // Сохраняем успешное сообщение в историю
         {
             let mut chats = self.chats.write().await;
             chats.entry(chat_key).or_default().push(chat_message);
@@ -485,30 +486,29 @@ impl NetworkManager {
                 let error_msg = if e.to_string().contains("10061")
                     || e.to_string().contains("Connection refused")
                 {
-                    "Соединение отклонено - получатель может быть не в сети".to_string()
+                    "Connection refused - recipient may not be online".to_string()
                 } else {
-                    format!("Не удалось подключиться: {}", e)
+                    format!("Failed to connect: {}", e)
                 };
                 return Err(error_msg.into());
             }
-            Err(_) => return Err("Таймаут соединения".into()),
+            Err(_) => return Err("Connection timeout".into()),
         };
 
         let data = serde_json::to_vec(message)?;
 
         match tokio::time::timeout(Duration::from_secs(3), stream.write_all(&data)).await {
             Ok(Ok(_)) => {
-                // Принудительная отправка данных
                 let _ = stream.flush().await;
                 Ok(())
             }
-            Ok(Err(e)) => Err(format!("Ошибка отправки данных: {}", e).into()),
-            Err(_) => Err("Таймаут записи".into()),
+            Ok(Err(e)) => Err(format!("Data send error: {}", e).into()),
+            Err(_) => Err("Write timeout".into()),
         }
     }
 
     pub async fn get_chat_messages(&self, contact_name: &str) -> Vec<ChatMessage> {
-        let chat_key = self.create_chat_key(contact_name);
+        let chat_key = self.create_chat_key(contact_name).await;
         let chats = self.chats.read().await;
         chats.get(&chat_key).cloned().unwrap_or_default()
     }
@@ -516,14 +516,14 @@ impl NetworkManager {
     pub async fn block_peer(&self, peer_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut blocked = self.blocked_peers.write().await;
         blocked.insert(peer_id.to_string(), true);
-        println!("🚫 Пользователь {} заблокирован", peer_id);
+        println!("🚫 User {} blocked", peer_id);
         Ok(())
     }
 
     pub async fn unblock_peer(&self, peer_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut blocked = self.blocked_peers.write().await;
         blocked.remove(peer_id);
-        println!("✅ Пользователь {} разблокирован", peer_id);
+        println!("✅ User {} unblocked", peer_id);
         Ok(())
     }
 
@@ -540,17 +540,15 @@ impl NetworkManager {
         matches!(stream_result, Ok(Ok(_)))
     }
 
-    // Дополнительный метод для graceful restart
     pub async fn restart_server(
         &self,
         port: u16,
         contacts: Arc<RwLock<HashMap<String, Contact>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("🔄 Перезапуск сервера...");
+        println!("🔄 Restarting server...");
 
         if self.is_running() {
             self.shutdown().await?;
-            // Даем время на корректное завершение
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
