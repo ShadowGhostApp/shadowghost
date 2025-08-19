@@ -39,48 +39,51 @@
 ## 🏗️ Project Architecture
 
 ```mermaid
-graph TB
-    %% Стиль для более органичного вида
-    classDef flutter fill:#2196F3,stroke:#1976D2,stroke-width:3px,color:#fff
-    classDef rust fill:#CE422B,stroke:#8B2500,stroke-width:3px,color:#fff  
-    classDef user fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
-    classDef network fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
-
-    subgraph " "
-        direction TB
-        UI["📱 User Interface"]:::flutter
-        Logic["🧠 Business Logic"]:::flutter
+graph LR
+    subgraph HomeNetwork [Home Network]
+        Alice[Alice ShadowGhost]
+        HomeRouter[Home Router]
+        Alice --> HomeRouter
     end
     
-    subgraph "  "
-        direction LR  
-        Protocol["🔗 ShadowProtocol"]:::rust
-        P2P["🌐 P2P Network"]:::network
-        Crypto["🔐 Cryptography"]:::rust
+    subgraph OfficeNetwork [Office Network]
+        Bob[Bob ShadowGhost]
+        OfficeRouter[Office Router]
+        Bob --> OfficeRouter
     end
     
-    subgraph "   "
-        direction TB
-        Peer1["👤 User 1"]:::user
-        Peer2["👤 User 2"]:::user  
-        Peer3["👤 User N"]:::user
+    subgraph InternetServices [Internet Services]
+        STUNServer[STUN Server]
+        RelayServer[TURN Relay]
     end
     
-    %% Связи с изгибами
-    UI -.->|"async calls"| Logic
-    Logic ==>|"FFI bridge"| Protocol
-    Protocol -.->|"spawns"| P2P
-    Protocol ==>|"encrypts with"| Crypto
+    subgraph ManualProcess [Manual Contact Exchange]
+        SGLinkGen[Alice generates SG link]
+        SGLinkShare[Share link via external channel]
+        SGLinkAdd[Bob adds SG link]
+    end
     
-    %% P2P соединения (неровные)
-    P2P ~~~ Peer1
-    P2P -.-> Peer2
-    P2P ==> Peer3
+    HomeRouter -.->|Get external IP| STUNServer
+    OfficeRouter -.->|Get external IP| STUNServer
     
-    %% Прямые P2P связи
-    Peer1 <-.->|"direct"| Peer2
-    Peer2 <-.->|"mesh"| Peer3  
-    Peer1 -.->|"relay"| Peer3
+    Alice --> SGLinkGen
+    SGLinkGen --> SGLinkShare
+    SGLinkShare --> SGLinkAdd
+    SGLinkAdd --> Bob
+    
+    HomeRouter <==>|Direct P2P| OfficeRouter
+    HomeRouter -.->|Fallback| RelayServer
+    RelayServer -.-> OfficeRouter
+    
+    classDef user fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef router fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef server fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef manual fill:#FF5722,stroke:#D84315,color:#fff
+    
+    class Alice,Bob user
+    class HomeRouter,OfficeRouter router
+    class STUNServer,RelayServer server
+    class SGLinkGen,SGLinkShare,SGLinkAdd manual
 ```
 
 ## 🔒 Security
@@ -98,11 +101,9 @@ Shadow Ghost uses modern cryptographic algorithms:
 
 | Platform  | Status   |
 |-----------|----------|
-| 🤖 Android | 🚧 Planned |
-| 🪟 Windows | 🚧 Planned |
+| 🪟 Windows | 🔧 In development |
 | 🐧 Linux   | 🚧 Planned |
-| 🍎 iOS     | 🚧 Planned |
-| 🍎 macOS   | 🚧 Planned |
+| 🤖 Android | 🚧 Planned |
 
 ---
 

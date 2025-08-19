@@ -32,3 +32,5 @@ pub mod prelude {
         StorageStats,
     };
 }
+
+flutter_rust_bridge::frb_generated_boilerplate!();

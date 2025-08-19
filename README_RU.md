@@ -36,58 +36,63 @@
 - 🔐 **Сквозное шифрование** — защита всех данных
 - 🚀 **Кроссплатформенность** — Android, Windows, Linux
 
-## 🏗️ Архитектура проекта
-
+## ❓ Как это работает?
+  
 ```mermaid
-graph TB
-    classDef flutter fill:#2196F3,stroke:#1976D2,stroke-width:3px,color:#fff
-    classDef rust fill:#CE422B,stroke:#8B2500,stroke-width:3px,color:#fff  
-    classDef user fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
-    classDef network fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
-
-    subgraph " "
-        direction TB
-        UI["📱 Пользовательский интерфейс"]:::flutter
-        Logic["🧠 Бизнес-логика"]:::flutter
+graph LR
+    subgraph HomeNetwork [Домашняя сеть]
+        Alice[Алиса ShadowGhost]
+        HomeRouter[Домашний роутер]
+        Alice --> HomeRouter
     end
     
-    subgraph "  "
-        direction LR  
-        Protocol["🔗 ShadowProtocol"]:::rust
-        P2P["🌐 P2P сеть"]:::network
-        Crypto["🔐 Криптография"]:::rust
+    subgraph OfficeNetwork [Офисная сеть]
+        Bob[Боб ShadowGhost]
+        OfficeRouter[Офисный роутер]
+        Bob --> OfficeRouter
     end
     
-    subgraph "   "
-        direction TB
-        Peer1["👤 Пользователь 1"]:::user
-        Peer2["👤 Пользователь 2"]:::user  
-        Peer3["👤 Пользователь N"]:::user
+    subgraph InternetServices [Интернет сервисы]
+        STUNServer[STUN сервер]
+        RelayServer[TURN реле]
     end
     
-    UI -.->|"асинхронные вызовы"| Logic
-    Logic ==>|"FFI-мост"| Protocol
-    Protocol -.->|"создает"| P2P
-    Protocol ==>|"шифрует с помощью"| Crypto
+    subgraph ManualProcess [Ручной обмен контактами]
+        SGLinkGen[Алиса создает SG ссылку]
+        SGLinkShare[Передача ссылки через внешний канал]
+        SGLinkAdd[Боб добавляет SG ссылку]
+    end
     
-    P2P ~~~ Peer1
-    P2P -.-> Peer2
-    P2P ==> Peer3
+    HomeRouter -.->|Узнать внешний IP| STUNServer
+    OfficeRouter -.->|Узнать внешний IP| STUNServer
     
-    Peer1 <-.->|"прямое"| Peer2
-    Peer2 <-.->|"mesh-сеть"| Peer3  
-    Peer1 -.->|"ретрансляция"| Peer3
+    Alice --> SGLinkGen
+    SGLinkGen --> SGLinkShare
+    SGLinkShare --> SGLinkAdd
+    SGLinkAdd --> Bob
+    
+    HomeRouter <==>|Прямое P2P| OfficeRouter
+    HomeRouter -.->|Резерв| RelayServer
+    RelayServer -.-> OfficeRouter
+    
+    classDef user fill:#4CAF50,stroke:#2E7D32,color:#fff
+    classDef router fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef server fill:#FF9800,stroke:#F57C00,color:#fff
+    classDef manual fill:#FF5722,stroke:#D84315,color:#fff
+    
+    class Alice,Bob user
+    class HomeRouter,OfficeRouter router
+    class STUNServer,RelayServer server
+    class SGLinkGen,SGLinkShare,SGLinkAdd manual
 ```
 
 ## 🎯 Поддерживаемые платформы
 
 | Платформа  | Статус      |
 | ---------- | ----------- |
-| 🤖 Android | 🚧 В планах |
-| 🪟 Windows | 🚧 В планах |
+| 🪟 Windows | 🔧 В разработке |
 | 🐧 Linux   | 🚧 В планах |
-| 🍎 iOS     | 🚧 В планах |
-| 🍎 macOS   | 🚧 В планах |
+| 🤖 Android | 🚧 В планах |
 
 ---
 
