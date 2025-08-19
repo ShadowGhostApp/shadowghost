@@ -3,4 +3,64 @@ name = "rust"
 version = "0.1.0"
 edition = "2024"
 
+
+[lib]
+name = "shadowghost"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib"]
+
+[[bin]]
+name = "shadowghost"
+path = "src/bin/main.rs"
+
+[[bench]]
+name = "benchmarks"
+path = "bench/benchmarks.rs"
+harness = false
+
 [dependencies]
+# Bridging API for Frontend
+flutter_rust_bridge = "2"
+
+# Async runtime
+tokio = { version = "1.47.1", features = ["full", "time"] }
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9.5"
+
+# Networking
+reqwest = { version = "0.12.23", features = ["json"] }
+
+# Crypto
+ring = "0.17"
+curve25519-dalek = "4.0"
+
+# Encoding
+base64 = "0.22.1"
+uuid = { version = "1.0", features = ["v4"] }
+
+# Logging
+log = "0.4.27"
+env_logger = "0.11.8"
+
+# Random
+rand = "0.9.2"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async utilities
+futures = "0.3.31"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
+tokio-test = "0.4"
+tempfile = "3.8"
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.9.2"
