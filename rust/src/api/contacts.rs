@@ -4,10 +4,8 @@ use chrono::Utc;
 use flutter_rust_bridge::frb;
 
 pub async fn add_contact(name: String, address: String) -> Result<Contact, String> {
-    let core_guard = CORE.lock().unwrap();
-    if let Some(core) = core_guard.clone() {
-        drop(core_guard);
-
+    let core_guard = CORE.lock().await;
+    if let Some(core) = core_guard.as_ref() {
         let contact = Contact {
             id: uuid::Uuid::new_v4().to_string(),
             name,
@@ -17,12 +15,7 @@ pub async fn add_contact(name: String, address: String) -> Result<Contact, Strin
             trust_level: TrustLevel::Unknown,
         };
 
-        match core
-            .lock()
-            .unwrap()
-            .add_contact_manual(contact.clone())
-            .await
-        {
+        match core.lock().await.add_contact_manual(contact.clone()).await {
             Ok(_) => Ok(contact),
             Err(e) => Err(format!("Failed to add contact: {}", e)),
         }
@@ -33,9 +26,11 @@ pub async fn add_contact(name: String, address: String) -> Result<Contact, Strin
 
 #[frb(sync)]
 pub fn get_contacts() -> Result<Vec<Contact>, String> {
-    let core_guard = CORE.lock().unwrap();
+    // Для sync функций используем блокирующий tokio
+    let rt = tokio::runtime::Handle::current();
+    let core_guard = rt.block_on(CORE.lock());
     if let Some(core) = core_guard.as_ref() {
-        match core.lock().unwrap().get_contacts_sync() {
+        match rt.block_on(core.lock()).get_contacts_sync() {
             Ok(contacts) => Ok(contacts),
             Err(e) => Err(format!("Failed to get contacts: {}", e)),
         }
@@ -45,10 +40,9 @@ pub fn get_contacts() -> Result<Vec<Contact>, String> {
 }
 
 pub async fn remove_contact(contact_id: String) -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
-    if let Some(core) = core_guard.clone() {
-        drop(core_guard);
-        match core.lock().unwrap().remove_contact_by_id(&contact_id).await {
+    let core_guard = CORE.lock().await;
+    if let Some(core) = core_guard.as_ref() {
+        match core.lock().await.remove_contact_by_id(&contact_id).await {
             Ok(_) => Ok("Contact removed successfully".to_string()),
             Err(e) => Err(format!("Failed to remove contact: {}", e)),
         }
@@ -61,12 +55,11 @@ pub async fn update_contact_trust_level(
     contact_id: String,
     trust_level: TrustLevel,
 ) -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
-    if let Some(core) = core_guard.clone() {
-        drop(core_guard);
+    let core_guard = CORE.lock().await;
+    if let Some(core) = core_guard.as_ref() {
         match core
             .lock()
-            .unwrap()
+            .await
             .update_contact_trust_level(&contact_id, trust_level)
             .await
         {
@@ -80,9 +73,10 @@ pub async fn update_contact_trust_level(
 
 #[frb(sync)]
 pub fn get_contact_by_id(contact_id: String) -> Result<Contact, String> {
-    let core_guard = CORE.lock().unwrap();
+    let rt = tokio::runtime::Handle::current();
+    let core_guard = rt.block_on(CORE.lock());
     if let Some(core) = core_guard.as_ref() {
-        match core.lock().unwrap().get_contact_by_id(&contact_id) {
+        match rt.block_on(core.lock()).get_contact_by_id(&contact_id) {
             Some(contact) => Ok(contact),
             None => Err("Contact not found".to_string()),
         }

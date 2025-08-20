@@ -8,12 +8,12 @@ static EVENT_QUEUE: LazyLock<Mutex<VecDeque<AppEvent>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 pub async fn start_event_listener() -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
+    let core_guard = CORE.lock().await;
     if let Some(core) = core_guard.clone() {
         drop(core_guard);
 
         tokio::spawn(async move {
-            let mut event_receiver = core.lock().unwrap().get_event_bus().subscribe();
+            let mut event_receiver = core.lock().await.get_event_bus().subscribe();
             while let Ok(event) = event_receiver.recv().await {
                 let mut queue = EVENT_QUEUE.lock().unwrap();
                 queue.push_back(event);
@@ -50,7 +50,7 @@ pub fn clear_event_queue() -> String {
 }
 
 pub async fn emit_custom_event(event_type: String, data: String) -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
+    let core_guard = CORE.lock().await;
     if let Some(core) = core_guard.clone() {
         drop(core_guard);
 
@@ -60,7 +60,7 @@ pub async fn emit_custom_event(event_type: String, data: String) -> Result<Strin
             timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
-        core.lock().unwrap().get_event_bus().emit(custom_event);
+        core.lock().await.get_event_bus().emit(custom_event);
         Ok(format!("Custom event '{}' emitted: {}", event_type, data))
     } else {
         Err("Core not initialized".to_string())

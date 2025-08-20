@@ -1,9 +1,10 @@
 use crate::core::ShadowGhostCore;
 use flutter_rust_bridge::frb;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
+use tokio::sync::Mutex;
 
 pub static CORE: LazyLock<Mutex<Option<Arc<Mutex<ShadowGhostCore>>>>> =
-    LazyLock::new(|| Mutex::new(None));
+    LazyLock::new(|| Mutex::const_new(None));
 
 pub async fn initialize_core() -> Result<String, String> {
     let app_data_dir = std::env::temp_dir().join("shadowghost_flutter");
@@ -12,7 +13,7 @@ pub async fn initialize_core() -> Result<String, String> {
     match ShadowGhostCore::new() {
         Ok(mut core) => match core.initialize(Some("Flutter User".to_string())).await {
             Ok(_) => {
-                *CORE.lock().unwrap() = Some(Arc::new(Mutex::new(core)));
+                *CORE.lock().await = Some(Arc::new(Mutex::new(core)));
                 Ok("Core initialized successfully".to_string())
             }
             Err(e) => Err(format!("Failed to initialize core: {}", e)),
@@ -23,7 +24,9 @@ pub async fn initialize_core() -> Result<String, String> {
 
 #[frb(sync)]
 pub fn shutdown_core() -> Result<String, String> {
-    let mut core_guard = CORE.lock().unwrap();
+    // Для sync функций используем блокирующий tokio
+    let rt = tokio::runtime::Handle::current();
+    let mut core_guard = rt.block_on(CORE.lock());
     if core_guard.is_some() {
         *core_guard = None;
         Ok("Core shutdown successfully".to_string())
@@ -34,14 +37,14 @@ pub fn shutdown_core() -> Result<String, String> {
 
 #[frb(sync)]
 pub fn is_core_initialized() -> bool {
-    CORE.lock().unwrap().is_some()
+    let rt = tokio::runtime::Handle::current();
+    rt.block_on(CORE.lock()).is_some()
 }
 
 pub async fn generate_my_link() -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
-    if let Some(core) = core_guard.clone() {
-        drop(core_guard);
-        match core.lock().unwrap().generate_sg_link().await {
+    let core_guard = CORE.lock().await;
+    if let Some(core) = core_guard.as_ref() {
+        match core.lock().await.generate_sg_link().await {
             Ok(link) => Ok(link),
             Err(e) => Err(format!("Failed to generate link: {}", e)),
         }
@@ -51,10 +54,9 @@ pub async fn generate_my_link() -> Result<String, String> {
 }
 
 pub async fn start_server() -> Result<String, String> {
-    let core_guard = CORE.lock().unwrap();
-    if let Some(core) = core_guard.clone() {
-        drop(core_guard);
-        match core.lock().unwrap().start_server().await {
+    let core_guard = CORE.lock().await;
+    if let Some(core) = core_guard.as_ref() {
+        match core.lock().await.start_server().await {
             Ok(_) => Ok("Server started successfully".to_string()),
             Err(e) => Err(format!("Failed to start server: {}", e)),
         }
