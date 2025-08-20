@@ -21,16 +21,93 @@ flutter run
 - **Backend**: Rust
 - **Frontend**: Flutter
 
+# Команды установки Flutter SDK
+
+## Windows
+```powershell
+# Chocolatey
+choco install flutter
+
+# Scoop
+scoop bucket add extras
+scoop install flutter
+
+# Git
+git clone https://github.com/flutter/flutter.git -b stable
+```
+
+## macOS
+```bash
+# Homebrew
+brew install --cask flutter
+
+# Git
+git clone https://github.com/flutter/flutter.git -b stable
+export PATH="$PATH:`pwd`/flutter/bin"
+```
+
+## Linux
+```bash
+# Snap
+sudo snap install flutter --classic
+
+# Git
+git clone https://github.com/flutter/flutter.git -b stable
+export PATH="$PATH:`pwd`/flutter/bin"
+```
+
 ## Настройка среды разработки
 
-### Требования
+### Установка зависимостей
 
+#### Rust (если требуется)
 ```bash
-# Установка Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+```
 
-# Проверка Flutter
+#### Android Studio
+```bash
+# Скачать с https://developer.android.com/studio
+# Установить Android SDK, Android SDK Command-line Tools, Android SDK Build-Tools
+```
+
+#### VS Code
+```bash
+# Расширения для Flutter
+code --install-extension Dart-Code.flutter
+code --install-extension Dart-Code.dart-code
+```
+
+### Проверка и настройка
+```bash
+# Проверка установки и зависимостей
 flutter doctor
+
+# Проверка версии
+flutter --version
+
+# Принятие лицензий Android SDK
+flutter doctor --android-licenses
+
+# Создание нового проекта для тестирования
+flutter create test_app
+cd test_app
+flutter run
+```
+
+### Настройка устройств
+```bash
+# Список доступных устройств
+flutter devices
+
+# Включить веб-поддержку
+flutter config --enable-web
+
+# Включить поддержку настольных приложений
+flutter config --enable-windows-desktop
+flutter config --enable-macos-desktop  
+flutter config --enable-linux-desktop
 ```
 
 ### Продвинутые команды
@@ -129,7 +206,6 @@ shadowghost/
 
 ## Рекомендации по безопасности
 
-- **Никогда** не коммитьте API ключи, приватные ключи или секреты
 - **Всегда** валидируйте внешние входные данные в Rust и Dart
 - Используйте **безопасные настройки по умолчанию** в криптографических функциях
 - **Тестируйте** границы безопасности моста
