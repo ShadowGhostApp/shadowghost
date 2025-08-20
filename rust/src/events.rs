@@ -62,6 +62,11 @@ pub enum AppEvent {
     Network(NetworkEvent),
     Storage(StorageEvent),
     Crypto(CryptoEvent),
+    Custom {
+        event_type: String,
+        data: String,
+        timestamp: u64,
+    },
 }
 
 pub type EventSender = broadcast::Sender<AppEvent>;

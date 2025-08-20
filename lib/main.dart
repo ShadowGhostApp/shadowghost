@@ -9,7 +9,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Shadow Ghost',
+      title: 'ShadowGhost',
       theme: ThemeData.dark(),
       home: HomeScreen(),
     );
@@ -34,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _initializeCore() async {
     try {
-      final result = initCore();
+      final result = await initializeCore();
       setState(() {
         _status = result;
         _isInitialized = true;
@@ -48,91 +48,67 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadContacts() async {
     if (!_isInitialized) return;
     try {
-      final contacts = getContacts();
+      final contacts = await getContacts();
       setState(() => _contacts = contacts);
     } catch (e) {
       setState(() => _status = 'Load contacts error: $e');
     }
   }
 
-  Future<void> _addContact() async {
+  Future<void> _generateLink() async {
     if (!_isInitialized) return;
     try {
-      final contact = await addContact(
-        'Test Contact',
-        'test_public_key_${DateTime.now().millisecondsSinceEpoch}',
-      );
-      setState(() => _contacts.add(contact));
+      final link = await generateMyLink();
+      setState(() => _status = 'My link: $link');
     } catch (e) {
-      setState(() => _status = 'Add contact error: $e');
+      setState(() => _status = 'Generate link error: $e');
     }
   }
 
-  Future<void> _sendMessage(String contactId) async {
+  Future<void> _startServer() async {
     if (!_isInitialized) return;
     try {
-      final messageId = await sendMessage(contactId, 'Hello from Flutter!');
-      setState(() => _status = 'Message sent: $messageId');
-    } catch (e) {
-      setState(() => _status = 'Send message error: $e');
-    }
-  }
-
-  Future<void> _startDiscovery() async {
-    if (!_isInitialized) return;
-    try {
-      final result = await startDiscovery();
+      final result = await startServer();
       setState(() => _status = result);
     } catch (e) {
-      setState(() => _status = 'Discovery error: $e');
+      setState(() => _status = 'Start server error: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Shadow Ghost')),
+      appBar: AppBar(title: Text('ShadowGhost')),
       body: Column(
         children: [
-          Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Status: $_status'),
+          Padding(padding: EdgeInsets.all(16), child: Text(_status)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: _generateLink,
+                child: Text('Generate Link'),
+              ),
+              ElevatedButton(
+                onPressed: _startServer,
+                child: Text('Start Server'),
+              ),
+              ElevatedButton(onPressed: _loadContacts, child: Text('Refresh')),
+            ],
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _contacts.length,
+              itemBuilder: (context, index) {
+                final contact = _contacts[index];
+                return ListTile(
+                  title: Text(contact.name),
+                  subtitle: Text(contact.address),
+                  trailing: Text(contact.status.toString()),
+                );
+              },
             ),
           ),
-          if (_isInitialized) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: _addContact,
-                  child: Text('Add Contact'),
-                ),
-                ElevatedButton(
-                  onPressed: _startDiscovery,
-                  child: Text('Start Discovery'),
-                ),
-              ],
-            ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _contacts.length,
-                itemBuilder: (context, index) {
-                  final contact = _contacts[index];
-                  return Card(
-                    child: ListTile(
-                      title: Text(contact.name),
-                      subtitle: Text('Status: ${contact.status}'),
-                      trailing: IconButton(
-                        icon: Icon(Icons.send),
-                        onPressed: () => _sendMessage(contact.id),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
         ],
       ),
     );

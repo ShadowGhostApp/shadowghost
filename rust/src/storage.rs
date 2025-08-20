@@ -1,610 +1,332 @@
-use crate::config::AppConfig;
-use crate::events::{EventBus, StorageEvent};
-use crate::network::{ChatMessage, Contact, ContactStatus};
-use futures::Future;
+use crate::network::{ChatMessage, Contact};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::pin::Pin;
-use tokio::fs as async_fs;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContactDatabase {
-    pub contacts: HashMap<String, Contact>,
-    pub last_updated: u64,
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatHistory {
-    pub messages: Vec<ChatMessage>,
-    pub participants: Vec<String>,
-    pub created_at: u64,
-    pub last_message_at: u64,
-}
+use std::error::Error;
+use std::fmt;
+use std::path::Path;
 
 #[derive(Debug)]
+pub enum StorageError {
+    IoError(String),
+    SerializationError(String),
+    DatabaseError(String),
+    NotFound(String),
+}
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StorageError::IoError(msg) => write!(f, "IO error: {}", msg),
+            StorageError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            StorageError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
+            StorageError::NotFound(msg) => write!(f, "Not found: {}", msg),
+        }
+    }
+}
+
+impl Error for StorageError {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    pub total_contacts: u64,
+    pub total_messages: u64,
+    pub storage_size_bytes: u64,
+    pub last_backup: Option<DateTime<Utc>>,
+}
+
+impl Default for StorageStats {
+    fn default() -> Self {
+        Self {
+            total_contacts: 0,
+            total_messages: 0,
+            storage_size_bytes: 0,
+            last_backup: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatStorage {
+    pub messages: HashMap<String, Vec<ChatMessage>>,
+    pub last_message_id: u64,
+}
+
+impl Default for ChatStorage {
+    fn default() -> Self {
+        Self {
+            messages: HashMap::new(),
+            last_message_id: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactStorage {
+    pub contacts: HashMap<String, Contact>,
+    pub last_contact_id: u64,
+}
+
+impl Default for ContactStorage {
+    fn default() -> Self {
+        Self {
+            contacts: HashMap::new(),
+            last_contact_id: 0,
+        }
+    }
+}
+
 pub struct StorageManager {
-    config: AppConfig,
-    data_dir: PathBuf,
-    event_bus: EventBus,
+    base_path: String,
+    chat_storage: ChatStorage,
+    contact_storage: ContactStorage,
+    stats: StorageStats,
 }
 
 impl StorageManager {
-    pub fn new(config: AppConfig, event_bus: EventBus) -> Result<Self, Box<dyn std::error::Error>> {
-        let data_dir = config.storage.data_dir.clone();
-
-        fs::create_dir_all(&data_dir)?;
-        fs::create_dir_all(data_dir.join("contacts"))?;
-        fs::create_dir_all(data_dir.join("chats"))?;
-        fs::create_dir_all(data_dir.join("keys"))?;
-        fs::create_dir_all(data_dir.join("backups"))?;
+    pub fn new(base_path: String) -> Result<Self, StorageError> {
+        let path = Path::new(&base_path);
+        if !path.exists() {
+            std::fs::create_dir_all(path).map_err(|e| StorageError::IoError(e.to_string()))?;
+        }
 
         Ok(Self {
-            config,
-            data_dir,
-            event_bus,
+            base_path,
+            chat_storage: ChatStorage::default(),
+            contact_storage: ContactStorage::default(),
+            stats: StorageStats::default(),
         })
     }
 
-    pub async fn validate_contacts(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let mut issues = Vec::new();
-        let contacts_file = self.data_dir.join("contacts").join("contacts.json");
-
-        if !contacts_file.exists() {
-            return Ok(issues);
-        }
-
-        match async_fs::read_to_string(&contacts_file).await {
-            Ok(json_data) => match serde_json::from_str::<ContactDatabase>(&json_data) {
-                Ok(database) => {
-                    for (id, contact) in &database.contacts {
-                        if id.is_empty() {
-                            issues.push("Found contact with empty ID".to_string());
-                        }
-
-                        if contact.name.is_empty() {
-                            issues.push(format!("Contact {} has empty name", id));
-                        }
-
-                        if contact.address.is_empty() {
-                            issues.push(format!("Contact {} has empty address", contact.name));
-                        } else if !contact.address.contains(':') {
-                            issues.push(format!(
-                                "Contact {} has invalid address format",
-                                contact.name
-                            ));
-                        }
-
-                        if contact.last_seen == 0 {
-                            issues.push(format!("Contact {} has invalid timestamp", contact.name));
-                        }
-                    }
-
-                    if database.version.is_empty() {
-                        issues.push("Database missing version information".to_string());
-                    }
-                }
-                Err(e) => {
-                    issues.push(format!("Failed to parse contacts database: {}", e));
-                }
-            },
-            Err(e) => {
-                issues.push(format!("Failed to read contacts file: {}", e));
-            }
-        }
-
-        Ok(issues)
-    }
-
-    pub async fn validate_chats(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let mut issues = Vec::new();
-        let chats_dir = self.data_dir.join("chats");
-
-        if !chats_dir.exists() {
-            return Ok(issues);
-        }
-
-        let mut entries = async_fs::read_dir(&chats_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            if let Some(file_name) = entry.file_name().to_str() {
-                if file_name.ends_with(".json") {
-                    let chat_file = entry.path();
-
-                    match async_fs::read_to_string(&chat_file).await {
-                        Ok(json_data) => match serde_json::from_str::<ChatHistory>(&json_data) {
-                            Ok(history) => {
-                                if history.participants.is_empty() {
-                                    issues.push(format!("Chat {} has no participants", file_name));
-                                }
-
-                                if history.messages.is_empty() {
-                                    issues.push(format!("Chat {} has no messages", file_name));
-                                }
-
-                                for (i, message) in history.messages.iter().enumerate() {
-                                    if message.id.is_empty() {
-                                        issues.push(format!(
-                                            "Chat {} message {} has empty ID",
-                                            file_name, i
-                                        ));
-                                    }
-
-                                    if message.from.is_empty() || message.to.is_empty() {
-                                        issues.push(format!(
-                                            "Chat {} message {} has empty sender/recipient",
-                                            file_name, i
-                                        ));
-                                    }
-
-                                    if message.timestamp == 0 {
-                                        issues.push(format!(
-                                            "Chat {} message {} has invalid timestamp",
-                                            file_name, i
-                                        ));
-                                    }
-                                }
-
-                                if history.created_at == 0 || history.last_message_at == 0 {
-                                    issues
-                                        .push(format!("Chat {} has invalid timestamps", file_name));
-                                }
-                            }
-                            Err(e) => {
-                                issues.push(format!("Failed to parse chat {}: {}", file_name, e));
-                            }
-                        },
-                        Err(e) => {
-                            issues.push(format!("Failed to read chat file {}: {}", file_name, e));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(issues)
-    }
-
-    pub async fn save_contacts(
-        &self,
-        contacts: &HashMap<String, Contact>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let database = ContactDatabase {
-            contacts: contacts.clone(),
-            last_updated: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            version: "1.0".to_string(),
-        };
-
-        let json_data = serde_json::to_string_pretty(&database)?;
-        let contacts_file = self.data_dir.join("contacts").join("contacts.json");
-
-        if contacts_file.exists() {
-            let backup_file = self
-                .data_dir
-                .join("backups")
-                .join(format!("contacts_backup_{}.json", database.last_updated));
-
-            if let Err(e) = tokio::fs::copy(&contacts_file, &backup_file).await {
-                self.event_bus.emit_storage(StorageEvent::Error {
-                    error: e.to_string(),
-                    operation: "backup_contacts".to_string(),
-                });
-            }
-        }
-
-        async_fs::write(&contacts_file, json_data).await?;
-
-        self.event_bus.emit_storage(StorageEvent::ContactsSaved {
-            count: contacts.len(),
-        });
-
+    pub async fn initialize(&mut self) -> Result<(), StorageError> {
+        self.load_contacts().await?;
+        self.load_chats().await?;
+        self.update_stats().await?;
         Ok(())
     }
 
-    pub async fn load_contacts(
-        &self,
-    ) -> Result<HashMap<String, Contact>, Box<dyn std::error::Error>> {
-        let contacts_file = self.data_dir.join("contacts").join("contacts.json");
-
-        if !contacts_file.exists() {
-            self.event_bus
-                .emit_storage(StorageEvent::ContactsLoaded { count: 0 });
-            return Ok(HashMap::new());
-        }
-
-        let json_data = async_fs::read_to_string(&contacts_file).await?;
-        let database: ContactDatabase = serde_json::from_str(&json_data)?;
-
-        self.event_bus.emit_storage(StorageEvent::ContactsLoaded {
-            count: database.contacts.len(),
-        });
-
-        Ok(database.contacts)
-    }
-
-    pub fn save_chat_history<'a>(
-        &'a self,
-        chat_id: &'a str,
-        messages: &'a [ChatMessage],
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send + 'a>> {
-        Box::pin(async move {
-            if messages.is_empty() {
-                return Ok(());
-            }
-
-            let participants: Vec<String> = messages
-                .iter()
-                .flat_map(|m| vec![m.from.clone(), m.to.clone()])
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect();
-
-            let history = ChatHistory {
-                messages: messages.to_vec(),
-                participants,
-                created_at: messages.first().unwrap().timestamp,
-                last_message_at: messages.last().unwrap().timestamp,
-            };
-
-            let json_data = serde_json::to_string_pretty(&history)?;
-            let chat_file = self
-                .data_dir
-                .join("chats")
-                .join(format!("{}.json", chat_id));
-
-            async_fs::write(&chat_file, json_data).await?;
-
-            self.event_bus.emit_storage(StorageEvent::ChatHistorySaved {
-                chat_id: chat_id.to_string(),
-                message_count: messages.len(),
-            });
-
-            Ok(())
-        })
-    }
-
-    pub async fn save_chat_history_with_cleanup(
-        &self,
-        chat_id: &str,
-        messages: &[ChatMessage],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if messages.is_empty() {
-            return Ok(());
-        }
-
-        let cleaned_messages = self.apply_cleanup_rules(messages);
-
-        let participants: Vec<String> = cleaned_messages
-            .iter()
-            .flat_map(|m| vec![m.from.clone(), m.to.clone()])
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        let history = ChatHistory {
-            messages: cleaned_messages.clone(),
-            participants,
-            created_at: cleaned_messages.first().unwrap().timestamp,
-            last_message_at: cleaned_messages.last().unwrap().timestamp,
-        };
-
-        let json_data = serde_json::to_string_pretty(&history)?;
-        let chat_file = self
-            .data_dir
-            .join("chats")
-            .join(format!("{}.json", chat_id));
-
-        async_fs::write(&chat_file, json_data).await?;
-
-        let original_count = messages.len();
-        let final_count = cleaned_messages.len();
-
-        if final_count != original_count {
-            let removed = original_count - final_count;
-            self.event_bus.emit_storage(StorageEvent::CleanupCompleted {
-                removed_items: removed,
-            });
-        }
-
-        self.event_bus.emit_storage(StorageEvent::ChatHistorySaved {
-            chat_id: chat_id.to_string(),
-            message_count: final_count,
-        });
-
+    pub async fn save_contact(&mut self, contact: &Contact) -> Result<(), StorageError> {
+        self.contact_storage
+            .contacts
+            .insert(contact.id.clone(), contact.clone());
+        self.save_contacts().await?;
+        self.update_stats().await?;
         Ok(())
     }
 
-    fn apply_cleanup_rules(&self, messages: &[ChatMessage]) -> Vec<ChatMessage> {
-        let mut cleaned = messages.to_vec();
-
-        let cutoff_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
-            - (self.config.storage.auto_cleanup_days as u64 * 24 * 60 * 60);
-
-        cleaned.retain(|msg| msg.timestamp > cutoff_time);
-
-        if cleaned.len() > self.config.storage.max_chat_history as usize {
-            let excess = cleaned.len() - self.config.storage.max_chat_history as usize;
-            cleaned.drain(0..excess);
-        }
-
-        cleaned
+    pub async fn get_contact(&self, contact_id: &str) -> Result<Option<Contact>, StorageError> {
+        Ok(self.contact_storage.contacts.get(contact_id).cloned())
     }
 
-    pub async fn load_chat_history(
-        &self,
-        chat_id: &str,
-    ) -> Result<Vec<ChatMessage>, Box<dyn std::error::Error>> {
-        let chat_file = self
-            .data_dir
-            .join("chats")
-            .join(format!("{}.json", chat_id));
-
-        if !chat_file.exists() {
-            self.event_bus
-                .emit_storage(StorageEvent::ChatHistoryLoaded {
-                    chat_id: chat_id.to_string(),
-                    message_count: 0,
-                });
-            return Ok(Vec::new());
-        }
-
-        let json_data = async_fs::read_to_string(&chat_file).await?;
-        let history: ChatHistory = serde_json::from_str(&json_data)?;
-
-        self.event_bus
-            .emit_storage(StorageEvent::ChatHistoryLoaded {
-                chat_id: chat_id.to_string(),
-                message_count: history.messages.len(),
-            });
-
-        Ok(history.messages)
+    pub async fn get_all_contacts(&self) -> Result<Vec<Contact>, StorageError> {
+        Ok(self.contact_storage.contacts.values().cloned().collect())
     }
 
-    pub async fn append_message_to_chat(
-        &self,
+    pub async fn delete_contact(&mut self, contact_id: &str) -> Result<(), StorageError> {
+        self.contact_storage.contacts.remove(contact_id);
+        self.save_contacts().await?;
+        self.update_stats().await?;
+        Ok(())
+    }
+
+    pub async fn save_message(
+        &mut self,
         chat_id: &str,
         message: &ChatMessage,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut messages = self.load_chat_history(chat_id).await?;
-        messages.push(message.clone());
+    ) -> Result<(), StorageError> {
+        self.chat_storage
+            .messages
+            .entry(chat_id.to_string())
+            .or_insert_with(Vec::new)
+            .push(message.clone());
 
-        self.save_chat_history_with_cleanup(chat_id, &messages)
-            .await?;
+        self.save_chats().await?;
+        self.update_stats().await?;
         Ok(())
     }
 
-    pub async fn cleanup_all_chats(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let chats_dir = self.data_dir.join("chats");
+    pub async fn get_messages(&self, chat_id: &str) -> Result<Vec<ChatMessage>, StorageError> {
+        Ok(self
+            .chat_storage
+            .messages
+            .get(chat_id)
+            .cloned()
+            .unwrap_or_default())
+    }
 
-        if !chats_dir.exists() {
-            return Ok(());
-        }
+    pub async fn get_all_chats(&self) -> Result<HashMap<String, Vec<ChatMessage>>, StorageError> {
+        Ok(self.chat_storage.messages.clone())
+    }
 
-        let mut total_removed = 0;
-        let mut entries = async_fs::read_dir(&chats_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            if let Some(file_name) = entry.file_name().to_str() {
-                if file_name.ends_with(".json") {
-                    let chat_id = file_name.trim_end_matches(".json");
-                    let before_messages = self.load_chat_history(chat_id).await?;
-                    let before_count = before_messages.len();
-
-                    if before_count > 0 {
-                        self.save_chat_history_with_cleanup(chat_id, &before_messages)
-                            .await?;
-                        let after_messages = self.load_chat_history(chat_id).await?;
-                        total_removed += before_count.saturating_sub(after_messages.len());
-                    }
-                }
-            }
-        }
-
-        if total_removed > 0 {
-            self.event_bus.emit_storage(StorageEvent::CleanupCompleted {
-                removed_items: total_removed,
-            });
-        }
-
+    pub async fn delete_chat(&mut self, chat_id: &str) -> Result<(), StorageError> {
+        self.chat_storage.messages.remove(chat_id);
+        self.save_chats().await?;
+        self.update_stats().await?;
         Ok(())
     }
 
-    pub async fn save_private_key(
-        &self,
-        key_data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let key_file = self.data_dir.join("keys").join("private.key");
-
-        if key_file.exists() {
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs();
-
-            let backup_file = self
-                .data_dir
-                .join("backups")
-                .join(format!("private_key_backup_{}.key", timestamp));
-
-            if let Err(e) = tokio::fs::copy(&key_file, &backup_file).await {
-                self.event_bus.emit_storage(StorageEvent::Error {
-                    error: e.to_string(),
-                    operation: "backup_private_key".to_string(),
-                });
-            } else {
-                self.event_bus.emit_storage(StorageEvent::BackupCreated {
-                    file_path: backup_file.to_string_lossy().to_string(),
-                });
-            }
-        }
-
-        async_fs::write(&key_file, key_data).await?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = async_fs::metadata(&key_file).await?.permissions();
-            perms.set_mode(0o600);
-            async_fs::set_permissions(&key_file, perms).await?;
-        }
-
-        Ok(())
+    pub async fn get_stats(&self) -> Result<StorageStats, StorageError> {
+        Ok(self.stats.clone())
     }
 
-    pub async fn load_private_key(&self) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-        let key_file = self.data_dir.join("keys").join("private.key");
+    pub async fn backup(&mut self) -> Result<String, StorageError> {
+        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+        let backup_path = format!("{}/backup_{}.json", self.base_path, timestamp);
 
-        if !key_file.exists() {
-            return Ok(None);
-        }
-
-        let key_data = async_fs::read(&key_file).await?;
-        Ok(Some(key_data))
-    }
-
-    pub async fn get_storage_stats(&self) -> Result<StorageStats, Box<dyn std::error::Error>> {
-        let mut stats = StorageStats::default();
-
-        if let Ok(contacts) = self.load_contacts().await {
-            stats.total_contacts = contacts.len();
-            stats.online_contacts = contacts
-                .values()
-                .filter(|c| matches!(c.status, ContactStatus::Online))
-                .count();
-        }
-
-        let chats_dir = self.data_dir.join("chats");
-
-        if chats_dir.exists() {
-            let mut entries = async_fs::read_dir(&chats_dir).await?;
-
-            while let Some(entry) = entries.next_entry().await? {
-                if entry.file_type().await?.is_file() {
-                    stats.total_chats += 1;
-
-                    if let Some(file_name) = entry.file_name().to_str() {
-                        if file_name.ends_with(".json") {
-                            let chat_id = file_name.trim_end_matches(".json");
-                            if let Ok(messages) = self.load_chat_history(chat_id).await {
-                                stats.total_messages += messages.len();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        stats.data_size_bytes = self.calculate_directory_size(&self.data_dir).await?;
-        Ok(stats)
-    }
-
-    async fn calculate_directory_size(&self, dir: &PathBuf) -> Result<u64, std::io::Error> {
-        let mut total_size = 0u64;
-
-        if dir.exists() {
-            let mut entries = async_fs::read_dir(dir).await?;
-
-            while let Some(entry) = entries.next_entry().await? {
-                let metadata = entry.metadata().await?;
-
-                if metadata.is_file() {
-                    total_size += metadata.len();
-                } else if metadata.is_dir() {
-                    let path = entry.path();
-                    let recursive_size: Pin<
-                        Box<dyn futures::Future<Output = Result<u64, std::io::Error>>>,
-                    > = Box::pin(self.calculate_directory_size(&path));
-                    total_size += recursive_size.await?;
-                }
-            }
-        }
-
-        Ok(total_size)
-    }
-
-    pub async fn export_data(
-        &self,
-        export_path: &PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let export_data = ExportData {
-            contacts: self.load_contacts().await?,
-            chats: self.export_all_chats().await?,
-            exported_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            version: "1.0".to_string(),
+        let backup_data = BackupData {
+            contacts: self.contact_storage.clone(),
+            chats: self.chat_storage.clone(),
+            stats: self.stats.clone(),
+            created_at: Utc::now(),
         };
 
-        let json_data = serde_json::to_string_pretty(&export_data)?;
-        async_fs::write(export_path, json_data).await?;
+        let json_data = serde_json::to_string_pretty(&backup_data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        self.event_bus.emit_storage(StorageEvent::BackupCreated {
-            file_path: export_path.to_string_lossy().to_string(),
-        });
+        tokio::fs::write(&backup_path, json_data)
+            .await
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        self.stats.last_backup = Some(Utc::now());
+        Ok(backup_path)
+    }
+
+    pub async fn restore_from_backup(&mut self, backup_path: &str) -> Result<(), StorageError> {
+        let data = tokio::fs::read_to_string(backup_path)
+            .await
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        let backup_data: BackupData = serde_json::from_str(&data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        self.contact_storage = backup_data.contacts;
+        self.chat_storage = backup_data.chats;
+        self.stats = backup_data.stats;
+
+        self.save_contacts().await?;
+        self.save_chats().await?;
+        Ok(())
+    }
+
+    async fn load_contacts(&mut self) -> Result<(), StorageError> {
+        let contacts_path = format!("{}/contacts.json", self.base_path);
+        match tokio::fs::read_to_string(&contacts_path).await {
+            Ok(data) => {
+                self.contact_storage = serde_json::from_str(&data)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            }
+            Err(_) => {
+                self.contact_storage = ContactStorage::default();
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_contacts(&self) -> Result<(), StorageError> {
+        let contacts_path = format!("{}/contacts.json", self.base_path);
+        let data = serde_json::to_string_pretty(&self.contact_storage)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        tokio::fs::write(&contacts_path, data)
+            .await
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn load_chats(&mut self) -> Result<(), StorageError> {
+        let chats_path = format!("{}/chats.json", self.base_path);
+        match tokio::fs::read_to_string(&chats_path).await {
+            Ok(data) => {
+                self.chat_storage = serde_json::from_str(&data)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            }
+            Err(_) => {
+                self.chat_storage = ChatStorage::default();
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_chats(&self) -> Result<(), StorageError> {
+        let chats_path = format!("{}/chats.json", self.base_path);
+        let data = serde_json::to_string_pretty(&self.chat_storage)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        tokio::fs::write(&chats_path, data)
+            .await
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn update_stats(&mut self) -> Result<(), StorageError> {
+        self.stats.total_contacts = self.contact_storage.contacts.len() as u64;
+        self.stats.total_messages = self
+            .chat_storage
+            .messages
+            .values()
+            .map(|messages| messages.len() as u64)
+            .sum();
+
+        let contacts_size = self.estimate_size(&self.contact_storage)?;
+        let chats_size = self.estimate_size(&self.chat_storage)?;
+        self.stats.storage_size_bytes = contacts_size + chats_size;
 
         Ok(())
     }
 
-    async fn export_all_chats(
-        &self,
-    ) -> Result<HashMap<String, Vec<ChatMessage>>, Box<dyn std::error::Error>> {
-        let mut all_chats = HashMap::new();
-        let chats_dir = self.data_dir.join("chats");
+    fn estimate_size<T: Serialize>(&self, data: &T) -> Result<u64, StorageError> {
+        let json = serde_json::to_string(data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+        Ok(json.len() as u64)
+    }
 
-        if chats_dir.exists() {
-            let mut entries = async_fs::read_dir(&chats_dir).await?;
+    pub async fn clear_all_data(&mut self) -> Result<(), StorageError> {
+        self.contact_storage = ContactStorage::default();
+        self.chat_storage = ChatStorage::default();
+        self.stats = StorageStats::default();
 
-            while let Some(entry) = entries.next_entry().await? {
-                if let Some(file_name) = entry.file_name().to_str() {
-                    if file_name.ends_with(".json") {
-                        let chat_id = file_name.trim_end_matches(".json");
-                        if let Ok(messages) = self.load_chat_history(chat_id).await {
-                            all_chats.insert(chat_id.to_string(), messages);
-                        }
-                    }
+        self.save_contacts().await?;
+        self.save_chats().await?;
+        Ok(())
+    }
+
+    pub async fn get_unread_message_count(&self, chat_id: &str) -> Result<u64, StorageError> {
+        if let Some(messages) = self.chat_storage.messages.get(chat_id) {
+            let unread_count = messages
+                .iter()
+                .filter(|msg| {
+                    matches!(
+                        msg.delivery_status,
+                        crate::network::DeliveryStatus::Delivered
+                    )
+                })
+                .count() as u64;
+            Ok(unread_count)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn mark_messages_as_read(&mut self, chat_id: &str) -> Result<(), StorageError> {
+        if let Some(messages) = self.chat_storage.messages.get_mut(chat_id) {
+            for message in messages.iter_mut() {
+                if matches!(
+                    message.delivery_status,
+                    crate::network::DeliveryStatus::Delivered
+                ) {
+                    message.delivery_status = crate::network::DeliveryStatus::Read;
                 }
             }
+            self.save_chats().await?;
         }
-
-        Ok(all_chats)
+        Ok(())
     }
 }
 
-#[derive(Debug, Default)]
-pub struct StorageStats {
-    pub total_contacts: usize,
-    pub online_contacts: usize,
-    pub total_chats: usize,
-    pub total_messages: usize,
-    pub data_size_bytes: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ExportData {
-    contacts: HashMap<String, Contact>,
-    chats: HashMap<String, Vec<ChatMessage>>,
-    exported_at: u64,
-    version: String,
-}
-
-impl StorageStats {
-    pub fn format_size(&self) -> String {
-        let size = self.data_size_bytes as f64;
-
-        if size < 1024.0 {
-            format!("{} B", size)
-        } else if size < 1024.0 * 1024.0 {
-            format!("{:.1} KB", size / 1024.0)
-        } else if size < 1024.0 * 1024.0 * 1024.0 {
-            format!("{:.1} MB", size / (1024.0 * 1024.0))
-        } else {
-            format!("{:.1} GB", size / (1024.0 * 1024.0 * 1024.0))
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BackupData {
+    contacts: ContactStorage,
+    chats: ChatStorage,
+    stats: StorageStats,
+    created_at: DateTime<Utc>,
 }

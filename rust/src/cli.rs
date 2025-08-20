@@ -23,7 +23,7 @@ impl CliInterface {
             println!("⚠️ Server not started yet. Use 'start' command to receive connections.");
         }
 
-        let event_bus = self.core.get_event_bus().clone();
+        let event_bus = self.core.get_event_bus();
         tokio::spawn(async move {
             let mut receiver = event_bus.subscribe();
             while let Ok(event) = receiver.recv().await {
@@ -361,12 +361,18 @@ impl CliInterface {
             Ok(stats) => {
                 println!("\n📈 Network statistics:");
                 println!("┌─────────────────────┬─────────────────────┐");
-                println!("│ Messages sent       │ {:<19} │", stats.messages_sent);
-                println!("│ Messages received   │ {:<19} │", stats.messages_received);
+                println!(
+                    "│ Messages sent       │ {:<19} │",
+                    stats.total_messages_sent
+                );
+                println!(
+                    "│ Messages received   │ {:<19} │",
+                    stats.total_messages_received
+                );
                 println!("│ Bytes sent          │ {:<19} │", stats.bytes_sent);
                 println!("│ Bytes received      │ {:<19} │", stats.bytes_received);
-                println!("│ Total connections   │ {:<19} │", stats.total_connections);
-                println!("│ Active connections  │ {:<19} │", stats.active_connections);
+                println!("│ Connected peers     │ {:<19} │", stats.connected_peers);
+                println!("│ Uptime (seconds)    │ {:<19} │", stats.uptime_seconds);
                 println!("└─────────────────────┴─────────────────────┘");
             }
             Err(e) => println!("❌ Error getting statistics: {}", e),
@@ -567,6 +573,9 @@ impl CliInterface {
                                         crate::network::DeliveryStatus::Sent => {
                                             println!("📤 Message sent, waiting for confirmation");
                                         }
+                                        crate::network::DeliveryStatus::Read => {
+                                            println!("✔️ Message read");
+                                        }
                                     }
                                 }
                             }
@@ -621,6 +630,7 @@ impl CliInterface {
                             crate::network::DeliveryStatus::Sent => "📤",
                             crate::network::DeliveryStatus::Delivered => "✅",
                             crate::network::DeliveryStatus::Failed => "❌",
+                            crate::network::DeliveryStatus::Read => "👁️",
                         };
 
                         println!(

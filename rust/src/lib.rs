@@ -1,3 +1,5 @@
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
+pub mod api;
 pub mod cli;
 pub mod config;
 pub mod contact_manager;
@@ -12,6 +14,7 @@ pub mod storage;
 pub mod tls_masking;
 pub mod utils;
 
+pub use api::*;
 pub use config::{AppConfig, ConfigManager};
 pub use contact_manager::{ContactError, ContactManager};
 pub use core::{CoreError, ShadowGhostCore};
@@ -32,5 +35,3 @@ pub mod prelude {
         StorageStats,
     };
 }
-
-flutter_rust_bridge::frb_generated_boilerplate!();

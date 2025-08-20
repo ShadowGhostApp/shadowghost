@@ -1,447 +1,320 @@
-use crate::crypto::CryptoManager;
-use crate::events::EventBus;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
-use crate::peer::Peer;
-use crate::protocol::MessageType;
-use base64::{engine::general_purpose, Engine as _};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::sync::RwLock;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum ContactError {
-    InvalidLinkFormat(String),
-    DecodeError(String),
-    ParseError(String),
-    DuplicateContact(String),
-    NotFound(String),
-    Crypto(String),
+    InvalidContact(String),
+    ContactNotFound(String),
+    ContactExists(String),
+    SerializationError(String),
+    IoError(String),
 }
 
-impl std::fmt::Display for ContactError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ContactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ContactError::InvalidLinkFormat(msg) => write!(f, "Invalid link format: {}", msg),
-            ContactError::DecodeError(msg) => write!(f, "Decode error: {}", msg),
-            ContactError::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            ContactError::DuplicateContact(msg) => write!(f, "Duplicate contact: {}", msg),
-            ContactError::NotFound(msg) => write!(f, "Contact not found: {}", msg),
-            ContactError::Crypto(msg) => write!(f, "Crypto error: {}", msg),
+            ContactError::InvalidContact(msg) => write!(f, "Invalid contact: {}", msg),
+            ContactError::ContactNotFound(msg) => write!(f, "Contact not found: {}", msg),
+            ContactError::ContactExists(msg) => write!(f, "Contact exists: {}", msg),
+            ContactError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            ContactError::IoError(msg) => write!(f, "IO error: {}", msg),
         }
     }
 }
 
-impl std::error::Error for ContactError {}
+impl Error for ContactError {}
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PingMessage {
-    message_type: MessageType,
-    sender_id: String,
-    recipient_id: String,
-    content: Vec<u8>,
-    timestamp: u64,
-    message_id: Option<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactBook {
+    contacts: HashMap<String, Contact>,
+    blocked_contacts: HashMap<String, bool>,
 }
 
-pub struct ContactManager {
-    local_peer: Peer,
-    contacts: Arc<RwLock<HashMap<String, Contact>>>,
-    crypto: Arc<RwLock<CryptoManager>>,
-    event_bus: EventBus,
-}
-
-impl ContactManager {
-    pub fn new(local_peer: Peer, crypto: Arc<RwLock<CryptoManager>>, event_bus: EventBus) -> Self {
+impl ContactBook {
+    pub fn new() -> Self {
         Self {
-            local_peer,
-            contacts: Arc::new(RwLock::new(HashMap::new())),
-            crypto,
-            event_bus,
+            contacts: HashMap::new(),
+            blocked_contacts: HashMap::new(),
         }
     }
 
-    pub async fn generate_sg_link(&self) -> Result<String, ContactError> {
-        let peer_data = PeerData {
-            id: self.local_peer.id.clone(),
-            name: self.local_peer.name.clone(),
-            address: self.local_peer.address.clone(),
-            public_key: {
-                let crypto = self.crypto.read().await;
-                crypto.get_public_key().key_bytes
-            },
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ContactError::Crypto(e.to_string()))?
-                .as_secs(),
-        };
-
-        let data = serde_json::to_string(&peer_data)
-            .map_err(|e| ContactError::ParseError(e.to_string()))?;
-
-        let encoded = general_purpose::URL_SAFE_NO_PAD.encode(data.as_bytes());
-
-        match general_purpose::URL_SAFE_NO_PAD.decode(&encoded) {
-            Ok(test_decoded) => match String::from_utf8(test_decoded) {
-                Ok(test_json) => {
-                    if test_json != data {
-                        return Err(ContactError::ParseError(
-                            "Link generation self-test failed".to_string(),
-                        ));
-                    }
-                }
-                Err(_e) => {
-                    return Err(ContactError::ParseError(
-                        "Link generation produces invalid UTF-8".to_string(),
-                    ));
-                }
-            },
-            Err(_e) => {
-                return Err(ContactError::ParseError(
-                    "Link generation produces invalid base64".to_string(),
-                ));
-            }
+    pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
+        if self.contacts.contains_key(&contact.id) {
+            return Err(ContactError::ContactExists(format!(
+                "Contact with ID {} already exists",
+                contact.id
+            )));
         }
 
-        let sg_link = format!("sg://{}", encoded);
-        Ok(sg_link)
+        self.contacts.insert(contact.id.clone(), contact);
+        Ok(())
     }
 
-    fn normalize_base64(input: &str) -> String {
-        let mut normalized = input
-            .chars()
-            .map(|c| match c {
-                '-' => '+',
-                '_' => '/',
-                other => other,
-            })
-            .collect::<String>();
-
-        while normalized.len() % 4 != 0 {
-            normalized.push('=');
+    pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if !self.contacts.contains_key(contact_id) {
+            return Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )));
         }
 
-        normalized
+        self.contacts.remove(contact_id);
+        self.blocked_contacts.remove(contact_id);
+        Ok(())
     }
 
-    pub async fn add_contact_by_sg_link(&self, sg_link: &str) -> Result<Contact, ContactError> {
-        if !sg_link.starts_with("sg://") {
-            return Err(ContactError::InvalidLinkFormat(
-                "Link must start with sg://".to_string(),
-            ));
-        }
-
-        let encoded = &sg_link[5..];
-
-        let valid_chars = encoded.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '-' || c == '_'
-        });
-
-        if !valid_chars {
-            return Err(ContactError::InvalidLinkFormat(
-                "Contains invalid base64 characters".to_string(),
-            ));
-        }
-
-        let decoded_bytes = self.try_decode_base64(encoded)?;
-
-        if decoded_bytes.is_empty() || decoded_bytes[0] != b'{' {
-            return Err(ContactError::DecodeError(
-                "Data is not JSON format".to_string(),
-            ));
-        }
-
-        match std::str::from_utf8(&decoded_bytes) {
-            Ok(data_str) => {
-                let peer_data: PeerData = serde_json::from_str(data_str)
-                    .map_err(|e| ContactError::ParseError(format!("JSON parse failed: {}", e)))?;
-
-                if peer_data.id == self.local_peer.id {
-                    return Err(ContactError::DuplicateContact(
-                        "Cannot add yourself as contact".to_string(),
-                    ));
-                }
-
-                let contact = Contact {
-                    id: peer_data.id.clone(),
-                    name: peer_data.name.clone(),
-                    address: peer_data.address.clone(),
-                    status: ContactStatus::Offline,
-                    trust_level: TrustLevel::Low,
-                    last_seen: peer_data.connected_at,
-                };
-
-                {
-                    let mut contacts = self.contacts.write().await;
-
-                    let existing_contact = contacts.values().find(|c| c.name == peer_data.name);
-                    if let Some(existing) = existing_contact {
-                        if existing.id != peer_data.id {
-                            contacts.retain(|_, c| c.name != peer_data.name);
-                            println!("Updated contact {} with new address", peer_data.name);
-                        }
-                    }
-
-                    contacts.insert(peer_data.id.clone(), contact.clone());
-                }
-
-                {
-                    let mut crypto = self.crypto.write().await;
-                    crypto.add_peer_key(
-                        peer_data.id,
-                        crate::crypto::PublicKey {
-                            key_bytes: peer_data.public_key,
-                        },
-                    );
-                }
-
-                self.event_bus
-                    .emit_network(crate::events::NetworkEvent::ContactAdded {
-                        contact: contact.clone(),
-                    });
-
-                Ok(contact)
-            }
-            Err(utf8_error) => Err(ContactError::DecodeError(format!(
-                "UTF-8 conversion failed: {}. Decoded {} bytes, invalid sequence at position {}",
-                utf8_error,
-                decoded_bytes.len(),
-                utf8_error.valid_up_to()
-            ))),
-        }
+    pub fn get_contact(&self, contact_id: &str) -> Option<&Contact> {
+        self.contacts.get(contact_id)
     }
 
-    fn try_decode_base64(&self, encoded: &str) -> Result<Vec<u8>, ContactError> {
-        let decode_attempts: Vec<Box<dyn Fn() -> Result<Vec<u8>, base64::DecodeError>>> = vec![
-            Box::new(|| general_purpose::URL_SAFE_NO_PAD.decode(encoded)),
-            Box::new(|| general_purpose::URL_SAFE.decode(encoded)),
-            Box::new(|| general_purpose::STANDARD_NO_PAD.decode(encoded)),
-            Box::new(|| general_purpose::STANDARD.decode(encoded)),
-            Box::new(|| {
-                let normalized = Self::normalize_base64(encoded);
-                general_purpose::STANDARD.decode(&normalized)
-            }),
-            Box::new(|| {
-                let normalized = Self::normalize_base64(encoded);
-                general_purpose::URL_SAFE.decode(&normalized)
-            }),
-        ];
-
-        for attempt in decode_attempts.iter() {
-            if let Ok(result) = attempt() {
-                return Ok(result);
-            }
-        }
-
-        Err(ContactError::DecodeError(
-            "All base64 decode methods failed".to_string(),
-        ))
+    pub fn get_contacts(&self) -> Vec<Contact> {
+        self.contacts.values().cloned().collect()
     }
 
-    pub async fn get_contacts(&self) -> Vec<Contact> {
-        let contacts = self.contacts.read().await;
-        let mut unique_contacts: HashMap<String, Contact> = HashMap::new();
-
-        for contact in contacts.values() {
-            if let Some(existing) = unique_contacts.get(&contact.name) {
-                if contact.last_seen > existing.last_seen {
-                    unique_contacts.insert(contact.name.clone(), contact.clone());
-                }
-            } else {
-                unique_contacts.insert(contact.name.clone(), contact.clone());
-            }
-        }
-
-        unique_contacts.into_values().collect()
-    }
-
-    pub async fn get_contact_by_name(&self, name: &str) -> Option<Contact> {
-        let contacts = self.contacts.read().await;
-        contacts
-            .values()
-            .filter(|c| c.name == name)
-            .max_by_key(|c| c.last_seen)
-            .cloned()
-    }
-
-    pub async fn get_contact_by_id(&self, id: &str) -> Option<Contact> {
-        let contacts = self.contacts.read().await;
-        contacts.get(id).cloned()
-    }
-
-    pub async fn check_contact_online(&self, contact_name: &str) -> bool {
-        if let Some(contact) = self.get_contact_by_name(contact_name).await {
-            self.ping_contact_advanced(&contact).await
-        } else {
-            false
-        }
-    }
-
-    async fn ping_contact_advanced(&self, contact: &Contact) -> bool {
-        let standard_ports = vec![443, 80, 8080, 8443];
-
-        if let Ok((host, original_port)) = self.parse_address(&contact.address) {
-            let mut ports_to_try = vec![original_port];
-            ports_to_try.extend(standard_ports);
-            ports_to_try.dedup();
-
-            for port in ports_to_try {
-                let test_address = format!("{}:{}", host, port);
-                if self.ping_contact_on_address(&test_address, contact).await {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    async fn ping_contact_on_address(&self, address: &str, contact: &Contact) -> bool {
-        let ping_message = PingMessage {
-            message_type: MessageType::Ping,
-            sender_id: self.local_peer.id.clone(),
-            recipient_id: contact.id.clone(),
-            content: vec![],
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            message_id: None,
-        };
-
-        match self
-            .send_ping_and_wait_for_pong(address, &ping_message)
-            .await
-        {
-            Ok(_) => true,
-            Err(_) => false,
-        }
-    }
-
-    fn parse_address(&self, address: &str) -> Result<(String, u16), Box<dyn std::error::Error>> {
-        if let Some(colon_pos) = address.rfind(':') {
-            let host = &address[..colon_pos];
-            let port_str = &address[colon_pos + 1..];
-            let port: u16 = port_str.parse()?;
-            Ok((host.to_string(), port))
-        } else {
-            Err("Address must contain port".into())
-        }
-    }
-
-    async fn send_ping_and_wait_for_pong(
-        &self,
-        address: &str,
-        ping_message: &PingMessage,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let stream_result =
-            tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await;
-
-        let mut stream = match stream_result {
-            Ok(Ok(s)) => s,
-            Ok(Err(_)) => return Err("Connection failed".into()),
-            Err(_) => return Err("Connection timeout".into()),
-        };
-
-        let data = serde_json::to_vec(ping_message)?;
-
-        match tokio::time::timeout(Duration::from_secs(3), stream.write_all(&data)).await {
-            Ok(Ok(_)) => {
-                let _ = stream.flush().await;
-
-                let mut buffer = [0; 1024];
-                match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        if let Ok(response) = serde_json::from_slice::<PingMessage>(&buffer[..n]) {
-                            if response.message_type == MessageType::Pong {
-                                return Ok(());
-                            }
-                        }
-                        Err("Invalid pong response".into())
-                    }
-                    _ => Err("No pong received".into()),
-                }
-            }
-            _ => Err("Failed to send ping".into()),
-        }
-    }
-
-    pub async fn block_contact(&self, contact_id: &str) -> Result<(), ContactError> {
-        let mut contacts = self.contacts.write().await;
-        if let Some(contact) = contacts.get_mut(contact_id) {
-            contact.status = ContactStatus::Blocked;
-            Ok(())
-        } else {
-            Err(ContactError::NotFound(contact_id.to_string()))
-        }
-    }
-
-    pub async fn unblock_contact(&self, contact_id: &str) -> Result<(), ContactError> {
-        let mut contacts = self.contacts.write().await;
-        if let Some(contact) = contacts.get_mut(contact_id) {
-            contact.status = ContactStatus::Offline;
-            Ok(())
-        } else {
-            Err(ContactError::NotFound(contact_id.to_string()))
-        }
-    }
-
-    pub async fn update_contact_status(
-        &self,
+    pub fn update_contact_status(
+        &mut self,
         contact_id: &str,
         status: ContactStatus,
     ) -> Result<(), ContactError> {
-        let mut contacts = self.contacts.write().await;
-        if let Some(contact) = contacts.get_mut(contact_id) {
+        if let Some(contact) = self.contacts.get_mut(contact_id) {
             contact.status = status;
-            contact.last_seen = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ContactError::Crypto(e.to_string()))?
-                .as_secs();
+            Ok(())
+        } else {
+            Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )))
         }
+    }
+
+    pub fn block_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if !self.contacts.contains_key(contact_id) {
+            return Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )));
+        }
+
+        self.blocked_contacts.insert(contact_id.to_string(), true);
         Ok(())
     }
 
-    pub async fn remove_contact(&self, contact_id: &str) -> Result<(), ContactError> {
-        let mut contacts = self.contacts.write().await;
-        if contacts.remove(contact_id).is_some() {
-            Ok(())
-        } else {
-            Err(ContactError::NotFound(contact_id.to_string()))
+    pub fn unblock_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.blocked_contacts.remove(contact_id);
+        Ok(())
+    }
+
+    pub fn is_blocked(&self, contact_id: &str) -> bool {
+        self.blocked_contacts
+            .get(contact_id)
+            .copied()
+            .unwrap_or(false)
+    }
+}
+
+pub struct ContactManager {
+    contact_book: ContactBook,
+    storage_path: String,
+}
+
+impl ContactManager {
+    pub fn new(storage_path: String) -> Result<Self, ContactError> {
+        Ok(Self {
+            contact_book: ContactBook::new(),
+            storage_path,
+        })
+    }
+
+    pub async fn load_contacts(&mut self) -> Result<(), ContactError> {
+        match tokio::fs::read_to_string(&self.storage_path).await {
+            Ok(data) => match serde_json::from_str::<ContactBook>(&data) {
+                Ok(book) => {
+                    self.contact_book = book;
+                    Ok(())
+                }
+                Err(e) => Err(ContactError::SerializationError(e.to_string())),
+            },
+            Err(_) => Ok(()),
         }
     }
 
-    pub async fn set_trust_level(
-        &self,
+    pub async fn save_contacts(&self) -> Result<(), ContactError> {
+        let data = serde_json::to_string_pretty(&self.contact_book)
+            .map_err(|e| ContactError::SerializationError(e.to_string()))?;
+
+        tokio::fs::write(&self.storage_path, data)
+            .await
+            .map_err(|e| ContactError::IoError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    pub fn add_contact_from_peer_data(&mut self, peer_data: &PeerData) -> Result<(), ContactError> {
+        let contact = Contact {
+            id: peer_data.id.clone(),
+            name: peer_data.name.clone(),
+            address: peer_data.address.clone(),
+            status: ContactStatus::Offline,
+            trust_level: TrustLevel::Pending,
+            last_seen: Some(peer_data.last_seen),
+        };
+
+        self.contact_book.add_contact(contact)
+    }
+
+    pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
+        self.contact_book.add_contact(contact)
+    }
+
+    pub fn get_contacts(&self) -> Vec<Contact> {
+        self.contact_book.get_contacts()
+    }
+
+    pub fn get_contact_by_name(&self, name: &str) -> Option<Contact> {
+        self.contact_book
+            .get_contacts()
+            .into_iter()
+            .find(|c| c.name == name)
+    }
+
+    pub fn get_contact(&self, contact_id: &str) -> Option<Contact> {
+        self.contact_book.get_contact(contact_id).cloned()
+    }
+
+    pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.remove_contact(contact_id)
+    }
+
+    pub fn update_contact_status(
+        &mut self,
+        contact_id: &str,
+        status: ContactStatus,
+    ) -> Result<(), ContactError> {
+        self.contact_book.update_contact_status(contact_id, status)
+    }
+
+    pub fn block_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.block_contact(contact_id)
+    }
+
+    pub fn unblock_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.unblock_contact(contact_id)
+    }
+
+    pub fn is_contact_blocked(&self, contact_id: &str) -> bool {
+        self.contact_book.is_blocked(contact_id)
+    }
+
+    pub fn search_contacts(&self, query: &str) -> Vec<Contact> {
+        let query = query.to_lowercase();
+        self.contact_book
+            .get_contacts()
+            .into_iter()
+            .filter(|contact| {
+                contact.name.to_lowercase().contains(&query)
+                    || contact.address.to_lowercase().contains(&query)
+            })
+            .collect()
+    }
+
+    pub fn get_trusted_contacts(&self) -> Vec<Contact> {
+        self.contact_book
+            .get_contacts()
+            .into_iter()
+            .filter(|contact| matches!(contact.trust_level, TrustLevel::Trusted))
+            .collect()
+    }
+
+    pub fn get_online_contacts(&self) -> Vec<Contact> {
+        self.contact_book
+            .get_contacts()
+            .into_iter()
+            .filter(|contact| matches!(contact.status, ContactStatus::Online))
+            .collect()
+    }
+
+    pub fn update_last_seen(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if let Some(contact) = self.contact_book.contacts.get_mut(contact_id) {
+            contact.last_seen = Some(Utc::now());
+            Ok(())
+        } else {
+            Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )))
+        }
+    }
+
+    pub fn set_trust_level(
+        &mut self,
         contact_id: &str,
         trust_level: TrustLevel,
     ) -> Result<(), ContactError> {
-        let mut contacts = self.contacts.write().await;
-        if let Some(contact) = contacts.get_mut(contact_id) {
+        if let Some(contact) = self.contact_book.contacts.get_mut(contact_id) {
             contact.trust_level = trust_level;
             Ok(())
         } else {
-            Err(ContactError::NotFound(contact_id.to_string()))
+            Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )))
         }
     }
 
-    pub async fn load_contacts(
-        &self,
-        contacts: HashMap<String, Contact>,
-    ) -> Result<(), ContactError> {
-        let mut contacts_guard = self.contacts.write().await;
-        *contacts_guard = contacts;
-        Ok(())
+    pub fn get_contact_count(&self) -> usize {
+        self.contact_book.contacts.len()
     }
 
-    pub async fn get_contacts_map(&self) -> HashMap<String, Contact> {
-        let contacts = self.contacts.read().await;
-        contacts.clone()
+    pub fn clear_all_contacts(&mut self) {
+        self.contact_book.contacts.clear();
+        self.contact_book.blocked_contacts.clear();
     }
 
-    pub fn get_contacts_ref(&self) -> Arc<RwLock<HashMap<String, Contact>>> {
-        self.contacts.clone()
+    pub fn export_contacts(&self) -> Result<String, ContactError> {
+        serde_json::to_string_pretty(&self.contact_book)
+            .map_err(|e| ContactError::SerializationError(e.to_string()))
+    }
+
+    pub fn import_contacts(&mut self, data: &str) -> Result<usize, ContactError> {
+        let imported_book: ContactBook = serde_json::from_str(data)
+            .map_err(|e| ContactError::SerializationError(e.to_string()))?;
+
+        let mut imported_count = 0;
+        for contact in imported_book.contacts.values() {
+            if !self.contact_book.contacts.contains_key(&contact.id) {
+                self.contact_book
+                    .contacts
+                    .insert(contact.id.clone(), contact.clone());
+                imported_count += 1;
+            }
+        }
+
+        Ok(imported_count)
+    }
+
+    pub fn create_contact_from_sg_link(&self, sg_link_data: &str) -> Result<Contact, ContactError> {
+        use base64::{engine::general_purpose, Engine as _};
+        let decoded_data = general_purpose::STANDARD
+            .decode(sg_link_data)
+            .map_err(|e| ContactError::InvalidContact(format!("Decode error: {}", e)))?;
+
+        let data_str = String::from_utf8(decoded_data)
+            .map_err(|_| ContactError::InvalidContact("UTF-8 conversion failed".to_string()))?;
+
+        let peer_data: PeerData = serde_json::from_str(&data_str)
+            .map_err(|_| ContactError::InvalidContact("JSON parse failed".to_string()))?;
+
+        Ok(Contact {
+            id: peer_data.id,
+            name: peer_data.name,
+            address: peer_data.address,
+            status: ContactStatus::Offline,
+            trust_level: TrustLevel::Pending,
+            last_seen: Some(peer_data.last_seen),
+        })
     }
 }

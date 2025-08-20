@@ -1,6 +1,6 @@
 {
-    "name": "shadow_ghost",
-    "short_name": "shadow_ghost",
+    "name": "shadowghost",
+    "short_name": "shadowghost",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

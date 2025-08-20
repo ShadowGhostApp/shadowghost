@@ -1,16 +1,6 @@
-rust_input:
-  - rust/src/api/core.rs
-  - rust/src/api/contacts.rs
-  - rust/src/api/messages.rs
-  - rust/src/api/network.rs
-dart_output: lib/bridge_generated.dart
-c_output:
-  - ios/Classes/bridge_generated.h
-  - macos/Classes/bridge_generated.h
-  - windows/bridge_generated.h
-  - linux/bridge_generated.h
-rust_crate_dir: rust
+rust_input: crate::api
+dart_output: lib/bridge_generated
+c_output: bridge_generated.h
+rust_root: rust/
 dart_format_line_length: 120
-
-# DON'T TOUCH
-web: false
+web: true

@@ -1,7 +1,7 @@
 [package]
 name = "shadowghost"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "shadowghost"
@@ -16,13 +16,16 @@ name = "benchmarks"
 path = "bench/benchmarks.rs"
 harness = false
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
 [dependencies]
 # Bridging API for Frontend
-flutter_rust_bridge = "2"
+flutter_rust_bridge = "=2.11.1"
 
 # Async runtime
 tokio = { version = "1.47.1", features = ["full", "time"] }
-tokio-util = "0.7"
+tokio-util = "0.7.16"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
