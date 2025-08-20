@@ -41,7 +41,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  List<Contact> _contacts = [
+  final List<Contact> _contacts = [
     Contact(
       name: 'Alice',
       lastMessage: 'Hello there!',
