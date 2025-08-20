@@ -5,11 +5,9 @@
 *.swp
 .DS_Store
 .atom/
-.build/
 .buildlog/
 .history
 .svn/
-.swiftpm/
 migrate_working_dir/
 
 # IntelliJ related
@@ -25,10 +23,13 @@ migrate_working_dir/
 
 # Flutter/Dart/Pub related
 **/doc/api/
-**/ios/Flutter/.last_build_id
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+.fvm/
+.packages
 .pub-cache/
 .pub/
 /build/
@@ -44,5 +45,49 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Generated files from flutter_rust_bridge
+lib/bridge_generated/
+bridge_generated.h
+
+# Generated plugin registrants
+**/GeneratedPluginRegistrant.*
+**/generated_plugin_registrant.*
+
+# Native builds
+rust/target/
+
+# Platform-specific generated files
+**/Flutter/ephemeral/
+**/flutter/ephemeral/
+
+# Web
+web/flutter_service_worker.js
+
+# Windows
+windows/flutter/ephemeral/
+
+# macOS
+macos/Flutter/ephemeral/
+
+# Linux
+linux/flutter/ephemeral/
+
+# iOS
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
+
+# Android
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+android/.gradle
+android/captures/
+android/gradlew
+android/gradlew.bat
+android/local.properties
+android/key.properties
+**/*.keystore
+**/*.jks
+
+# Other
 Cargo.lock
 git.diff
