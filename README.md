@@ -99,9 +99,10 @@ Shadow Ghost uses modern cryptographic algorithms:
 
 ## 🎯 Supported Platforms
 
-| Platform  | Status   |
-|-----------|----------|
-| 🪟 Windows | 🔧 In development |
+| Platform    | Status   |
+|-------------|----------|
+| 🌐 Web     | 🔧 In development |
+| 🪟 Windows | 🚧 Planned |
 | 🐧 Linux   | 🚧 Planned |
 | 🤖 Android | 🚧 Planned |
 

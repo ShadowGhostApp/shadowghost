@@ -45,7 +45,6 @@ app.*.map.json
 
 # Generated files from flutter_rust_bridge
 lib/bridge_generated/
-bridge_generated.h
 
 # Generated plugin registrants
 **/GeneratedPluginRegistrant.*

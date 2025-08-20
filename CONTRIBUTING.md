@@ -7,19 +7,24 @@
 git clone <repo-url>
 cd shadowghost
 
-# 2. Install dependencies
+# 2. Install flutter_rust_bridge_codegen
+cargo install flutter_rust_bridge_codegen
+
+# 3. Install Flutter dependencies
 flutter pub get
 
-# 3. Run the application (bridge is generated automatically)
+# 4. Generate bridge code
+flutter_rust_bridge_codegen generate
+
+# 5. Run the application
 flutter run
 ```
-
-That's it! The Rust-Flutter bridge is generated automatically on first run.
 
 ## Technology Stack
 
 - **Backend**: Rust
 - **Frontend**: Flutter
+- **Bridge**: Flutter Rust Bridge v2
 
 # Flutter SDK Installation Commands
 
@@ -60,10 +65,15 @@ export PATH="$PATH:`pwd`/flutter/bin"
 
 ### Installing Dependencies
 
-#### Rust (if required)
+#### Rust (required)
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
+```
+
+#### Flutter Rust Bridge Codegen
+```bash
+cargo install flutter_rust_bridge_codegen
 ```
 
 #### Android Studio
@@ -110,31 +120,37 @@ flutter config --enable-macos-desktop
 flutter config --enable-linux-desktop
 ```
 
-### Advanced Commands
+### Bridge Code Generation
 
 #### Manual Bridge Generation
 ```bash
-# If auto-generation fails
-dart run build_runner build
+# Generate bridge code
+flutter_rust_bridge_codegen generate
 
-# Watch mode for development
-dart run build_runner watch
+# Clean generated files and regenerate
+rm -rf lib/bridge_generated
+flutter_rust_bridge_codegen generate
 
-# Clean generated files
-dart pub run build_runner clean
+# Development workflow
+flutter pub get
+flutter_rust_bridge_codegen generate
+flutter run
 ```
 
 ### Project Structure
 ```
 shadowghost/
-├── lib/                       # Flutter/Dart code
-│   └── bridge_generated/      # Auto-generated bridge code
-├── rust/                      # Rust code
-│   ├── api/                   # Exported functions for Flutter
+├── lib/                          # Flutter/Dart code
+│   ├── bridge_generated/         # Generated bridge code (DO NOT EDIT)
+│   │   ├── frb_generated.dart   # Main bridge entry point
+│   │   └── api/                 # Generated API bindings
+│   └── main.dart                # Flutter app entry point
+├── rust/                        # Rust code
 │   ├── src/
-│   │   └── lib.rs             # Rust library entry point
+│   │   ├── lib.rs              # Rust library entry point
+│   │   └── api/                # Exported functions for Flutter
 │   └── Cargo.toml
-├── flutter_rust_bridge.yaml   # Bridge configuration
+├── flutter_rust_bridge.yaml    # Bridge configuration
 └── pubspec.yaml
 ```
 
@@ -146,8 +162,8 @@ shadowghost/
    ```
 
 2. **Make changes**
-   - Edit Rust code in `rust/src/`
-   - Bridge code regenerates automatically in watch mode
+   - Edit Rust code in `rust/src/api/`
+   - Regenerate bridge code: `flutter_rust_bridge_codegen generate`
    - Edit Flutter code in `lib/`
 
 3. **Testing**
@@ -168,11 +184,11 @@ shadowghost/
    git commit -m "feat: add voice calls"
    git commit -m "fix: resolve connection timeout"
    git commit -m "docs: update API documentation"
-   git commit -m "bridge: update Rust FFI exports"
+   git commit -m "bridge: update Rust API exports"
    ```
 
 5. **PR Checklist**
-   - [ ] Bridge code regenerated (automatically)
+   - [ ] Bridge code regenerated (`flutter_rust_bridge_codegen generate`)
    - [ ] Rust tests passed (`cargo test`)
    - [ ] Flutter tests passed (`flutter test`)
    - [ ] Code formatted (`cargo fmt` + `flutter format .`)
@@ -181,21 +197,59 @@ shadowghost/
 
 ## Flutter Rust Bridge Guidelines
 
-- ✅ Place exported functions in `rust/src/api.rs`
-- ✅ Use watch mode during development
-- ✅ Let build_runner handle code generation
+- ✅ Place exported functions in `rust/src/api/` modules
+- ✅ Use `#[frb(sync)]` for synchronous functions
+- ✅ Use `Result<T, String>` for error handling
+- ✅ Regenerate bridge code after Rust API changes
 - ✅ Follow Rust naming conventions for exports
 
 ### DO NOT
 - ❌ Manually edit files in `lib/bridge_generated/`
-- ❌ Commit generated files if they are in `.gitignore`
-- ❌ Use `tool/build.dart` (deprecated)
-- ❌ Run `flutter_rust_bridge_codegen` manually
+- ❌ Use `dart run build_runner` (not for FRB v2)
+- ❌ Skip bridge regeneration after API changes
+- ❌ Commit without testing bridge generation
 
 ### Adding New Rust Functions
-1. Add the function to `rust/src/api.rs`
-2. Bridge regenerates automatically in watch mode
-3. Use the generated Dart code in `lib/bridge_generated/`
+1. Add the function to appropriate `rust/src/api/*.rs` file
+2. Export in `rust/src/api/mod.rs`
+3. Run `flutter_rust_bridge_codegen generate`
+4. Use the generated Dart code from `lib/bridge_generated/api/`
+
+### Development Workflow
+```bash
+# 1. Make Rust changes
+vim rust/src/api/contacts.rs
+
+# 2. Regenerate bridge
+flutter_rust_bridge_codegen generate
+
+# 3. Update Flutter code
+vim lib/main.dart
+
+# 4. Test
+flutter run
+```
+
+## Common Issues
+
+### Bridge Generation Errors
+```bash
+# Clear and regenerate
+rm -rf lib/bridge_generated
+flutter clean
+flutter pub get
+flutter_rust_bridge_codegen generate
+```
+
+### Missing Types in Dart
+- Ensure Rust types are properly exported in `mod.rs`
+- Check `flutter_rust_bridge.yaml` configuration
+- Regenerate bridge code
+
+### Compilation Errors
+- Verify all Rust dependencies in `Cargo.toml`
+- Check for missing `#[frb]` annotations
+- Ensure proper `Result<T, String>` return types
 
 ## Security Guidelines
 - **Always** validate external inputs in Rust and Dart
@@ -205,10 +259,11 @@ shadowghost/
 
 ## Architectural Notes
 The project uses Flutter Rust Bridge v2 for seamless integration:
-- **Automatic code generation** from Rust to Dart
+- **Manual code generation** from Rust to Dart via `flutter_rust_bridge_codegen`
 - **Type safety** across language boundaries
 - **Zero-copy data transfer** where possible
 - **Asynchronous support** for non-blocking operations
+- **Result-based error handling** for robust error propagation
 
 ## License
 By contributing, you agree that your contributions will be licensed under CC BY-NC-SA 4.0.

@@ -1,5 +1,5 @@
 name: shadowghost
-description: "Decentralized messenger with direct P2P connections. Encrypted messaging, file sharing, and voice calls work without central servers. "
+description: "Decentralized messenger with direct P2P connections"
 publish_to: "none"
 version: 0.1.0
 
@@ -9,16 +9,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_rust_bridge: 2.11.1
+  flutter_rust_bridge: ^2.11.1
+  freezed_annotation: ^3.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   freezed: ^3.2.0
-  build_runner: ^2.4.7
-  json_annotation: ^4.8.1
-  json_serializable: ^6.7.1
+  build_runner: ^2.7.0
 
 flutter:
   uses-material-design: true

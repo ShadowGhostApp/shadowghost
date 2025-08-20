@@ -1,12 +1,14 @@
-use crate::contact_manager::{ContactError, ContactManager};
+use crate::contact_manager::{ContactError, ContactManager, ContactStats};
 use crate::events::EventBus;
 use crate::network::{
     ChatMessage, Contact, NetworkError, NetworkManager, NetworkStats, TrustLevel,
 };
 use crate::storage::{StorageError, StorageManager};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 #[derive(Debug)]
@@ -57,6 +59,7 @@ pub struct ShadowGhostCore {
     event_bus: EventBus,
     is_initialized: bool,
     user_name: Option<String>,
+    unread_cache: Arc<RwLock<HashMap<String, AtomicU64>>>,
 }
 
 impl ShadowGhostCore {
@@ -79,6 +82,7 @@ impl ShadowGhostCore {
             event_bus,
             is_initialized: false,
             user_name: None,
+            unread_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -166,7 +170,8 @@ impl ShadowGhostCore {
         }
 
         let contacts = self.contact_manager.read().await;
-        if contacts.get_contact_by_name(contact_name).is_none() {
+        let contact = contacts.get_contact_by_name(contact_name);
+        if contact.is_none() {
             return Err(CoreError::Contact(format!(
                 "Contact '{}' not found",
                 contact_name
@@ -174,7 +179,28 @@ impl ShadowGhostCore {
         }
         drop(contacts);
 
-        network.send_chat_message(contact_name, content).await?;
+        let message_id = network.send_chat_message(contact_name, content).await?;
+
+        let message = ChatMessage {
+            id: message_id,
+            from: self
+                .user_name
+                .as_ref()
+                .unwrap_or(&"user".to_string())
+                .clone(),
+            to: contact_name.to_string(),
+            content: content.to_string(),
+            msg_type: crate::network::ChatMessageType::Text,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            delivery_status: crate::network::DeliveryStatus::Sent,
+        };
+
+        let mut storage = self.storage_manager.write().await;
+        storage.save_message(contact_name, &message).await?;
+
         Ok(())
     }
 
@@ -190,8 +216,8 @@ impl ShadowGhostCore {
         &self,
         contact_name: &str,
     ) -> Result<Vec<ChatMessage>, CoreError> {
-        let network = self.network_manager.read().await;
-        Ok(network.get_chat_messages(contact_name).await?)
+        let storage = self.storage_manager.read().await;
+        Ok(storage.get_messages(contact_name).await?)
     }
 
     pub async fn get_unread_message_count(&self, contact_name: &str) -> Result<u64, CoreError> {
@@ -199,8 +225,55 @@ impl ShadowGhostCore {
         Ok(storage.get_unread_message_count(contact_name).await?)
     }
 
+    pub async fn mark_messages_as_read(&self, contact_name: &str) -> Result<(), CoreError> {
+        let mut storage = self.storage_manager.write().await;
+        storage.mark_messages_as_read(contact_name).await?;
+        self.reset_unread_count(contact_name).await;
+        Ok(())
+    }
+
+    pub async fn update_unread_cache(&self, contact_name: &str) -> Result<(), CoreError> {
+        let count = self.get_unread_message_count(contact_name).await?;
+        let mut cache = self.unread_cache.write().await;
+        cache
+            .entry(contact_name.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .store(count, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn get_unread_count_cached(&self, contact_name: &str) -> u64 {
+        if let Ok(cache) = self.unread_cache.try_read() {
+            cache
+                .get(contact_name)
+                .map(|atomic| atomic.load(Ordering::Relaxed))
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
+    pub async fn get_unread_count_async(&self, contact_name: &str) -> Result<u64, CoreError> {
+        let storage = self.storage_manager.read().await;
+        Ok(storage.get_unread_message_count(contact_name).await?)
+    }
+
     pub fn get_unread_count(&self, contact_name: &str) -> Result<u64, CoreError> {
-        Ok(0)
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                let storage_manager = self.storage_manager.clone();
+                let contact_name = contact_name.to_string();
+
+                match handle.block_on(async move {
+                    let storage = storage_manager.read().await;
+                    storage.get_unread_message_count(&contact_name).await
+                }) {
+                    Ok(count) => Ok(count),
+                    Err(e) => Err(CoreError::Storage(e.to_string())),
+                }
+            }
+            Err(_) => Ok(0),
+        }
     }
 
     pub async fn get_contacts(&self) -> Result<Vec<Contact>, CoreError> {
@@ -209,7 +282,37 @@ impl ShadowGhostCore {
     }
 
     pub fn get_contacts_sync(&self) -> Result<Vec<Contact>, CoreError> {
-        Ok(vec![])
+        if let Ok(contacts) = self.contact_manager.try_read() {
+            Ok(contacts.get_contacts())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub fn get_contact_by_id(&self, contact_id: &str) -> Option<Contact> {
+        if let Ok(contacts) = self.contact_manager.try_read() {
+            contacts.get_contact(contact_id)
+        } else {
+            None
+        }
+    }
+
+    pub async fn get_contact_by_id_async(&self, contact_id: &str) -> Option<Contact> {
+        let contacts = self.contact_manager.read().await;
+        contacts.get_contact(contact_id)
+    }
+
+    pub async fn get_contact_by_id_from_storage(
+        &self,
+        contact_id: &str,
+    ) -> Result<Option<Contact>, CoreError> {
+        let storage = self.storage_manager.read().await;
+        Ok(storage.get_contact(contact_id).await?)
+    }
+
+    pub async fn get_contact_stats(&self) -> Result<ContactStats, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.get_contact_stats())
     }
 
     pub async fn add_contact_by_sg_link(&self, sg_link: &str) -> Result<(), CoreError> {
@@ -237,15 +340,25 @@ impl ShadowGhostCore {
             ));
         }
 
-        contacts.add_contact(contact)?;
+        contacts.add_contact(contact.clone())?;
         contacts.save_contacts().await?;
+        drop(contacts);
+
+        let mut storage = self.storage_manager.write().await;
+        storage.save_contact(&contact).await?;
+
         Ok(())
     }
 
     pub async fn add_contact_manual(&self, contact: Contact) -> Result<(), CoreError> {
         let mut contacts = self.contact_manager.write().await;
-        contacts.add_contact(contact)?;
+        contacts.add_contact(contact.clone())?;
         contacts.save_contacts().await?;
+        drop(contacts);
+
+        let mut storage = self.storage_manager.write().await;
+        storage.save_contact(&contact).await?;
+
         Ok(())
     }
 
@@ -253,6 +366,11 @@ impl ShadowGhostCore {
         let mut contacts = self.contact_manager.write().await;
         contacts.remove_contact(contact_id)?;
         contacts.save_contacts().await?;
+        drop(contacts);
+
+        let mut storage = self.storage_manager.write().await;
+        storage.delete_contact(contact_id).await?;
+
         Ok(())
     }
 
@@ -264,11 +382,48 @@ impl ShadowGhostCore {
         let mut contacts = self.contact_manager.write().await;
         contacts.set_trust_level(contact_id, trust_level)?;
         contacts.save_contacts().await?;
+
+        if let Some(contact) = contacts.get_contact(contact_id) {
+            drop(contacts);
+            let mut storage = self.storage_manager.write().await;
+            storage.save_contact(&contact).await?;
+        }
+
         Ok(())
     }
 
-    pub fn get_contact_by_id(&self, contact_id: &str) -> Option<Contact> {
-        None
+    pub async fn block_contact(&self, contact_id: &str) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.block_contact(contact_id)?;
+        contacts.save_contacts().await?;
+        Ok(())
+    }
+
+    pub async fn unblock_contact(&self, contact_id: &str) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.unblock_contact(contact_id)?;
+        contacts.save_contacts().await?;
+        Ok(())
+    }
+
+    pub async fn search_contacts(&self, query: &str) -> Result<Vec<Contact>, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.search_contacts(query))
+    }
+
+    pub async fn get_trusted_contacts(&self) -> Result<Vec<Contact>, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.get_trusted_contacts())
+    }
+
+    pub async fn get_online_contacts(&self) -> Result<Vec<Contact>, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.get_online_contacts())
+    }
+
+    pub async fn get_blocked_contacts(&self) -> Result<Vec<Contact>, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.get_blocked_contacts())
     }
 
     pub async fn generate_sg_link(&self) -> Result<String, CoreError> {
@@ -318,10 +473,93 @@ impl ShadowGhostCore {
         Ok(network.get_network_stats().await?)
     }
 
+    pub async fn get_storage_stats(&self) -> Result<crate::storage::StorageStats, CoreError> {
+        let storage = self.storage_manager.read().await;
+        Ok(storage.get_stats().await?)
+    }
+
     pub async fn update_user_name(&mut self, new_name: String) -> Result<(), CoreError> {
         self.user_name = Some(new_name.clone());
         let network = self.network_manager.read().await;
         network.update_peer_name(new_name).await?;
         Ok(())
+    }
+
+    pub async fn clear_unread_cache(&self) {
+        let mut cache = self.unread_cache.write().await;
+        cache.clear();
+    }
+
+    pub async fn increment_unread_count(&self, contact_name: &str) {
+        let mut cache = self.unread_cache.write().await;
+        let counter = cache
+            .entry(contact_name.to_string())
+            .or_insert_with(|| AtomicU64::new(0));
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub async fn reset_unread_count(&self, contact_name: &str) {
+        let cache = self.unread_cache.write().await;
+        if let Some(counter) = cache.get(contact_name) {
+            counter.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub async fn export_contacts(&self) -> Result<String, CoreError> {
+        let contacts = self.contact_manager.read().await;
+        Ok(contacts.export_contacts()?)
+    }
+
+    pub async fn import_contacts(&self, data: &str) -> Result<usize, CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        let imported_count = contacts.import_contacts(data)?;
+        contacts.save_contacts().await?;
+        Ok(imported_count)
+    }
+
+    pub async fn get_contact_count(&self) -> usize {
+        let contacts = self.contact_manager.read().await;
+        contacts.get_contact_count()
+    }
+
+    pub async fn clear_all_contacts(&self) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.clear_all_contacts();
+        contacts.save_contacts().await?;
+        drop(contacts);
+
+        let mut storage = self.storage_manager.write().await;
+        storage.clear_all_data().await?;
+
+        self.clear_unread_cache().await;
+        Ok(())
+    }
+
+    pub async fn backup_data(&self) -> Result<String, CoreError> {
+        let mut storage = self.storage_manager.write().await;
+        Ok(storage.backup().await?)
+    }
+
+    pub async fn restore_data(&self, backup_path: &str) -> Result<(), CoreError> {
+        let mut storage = self.storage_manager.write().await;
+        storage.restore_from_backup(backup_path).await?;
+
+        let mut contacts = self.contact_manager.write().await;
+        contacts.load_contacts().await?;
+
+        self.clear_unread_cache().await;
+        Ok(())
+    }
+
+    pub async fn delete_chat(&self, contact_name: &str) -> Result<(), CoreError> {
+        let mut storage = self.storage_manager.write().await;
+        storage.delete_chat(contact_name).await?;
+        self.reset_unread_count(contact_name).await;
+        Ok(())
+    }
+
+    pub async fn get_all_chats(&self) -> Result<HashMap<String, Vec<ChatMessage>>, CoreError> {
+        let storage = self.storage_manager.read().await;
+        Ok(storage.get_all_chats().await?)
     }
 }

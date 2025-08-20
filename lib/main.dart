@@ -1,15 +1,32 @@
 import 'package:flutter/material.dart';
-import 'bridge_generated.dart';
 
 void main() {
   runApp(MyApp());
 }
 
+enum ContactStatus { online, offline, away }
+
+class Contact {
+  final String name;
+  final String lastMessage;
+  final ContactStatus status;
+  final DateTime timestamp;
+
+  Contact({
+    required this.name,
+    required this.lastMessage,
+    required this.status,
+    required this.timestamp,
+  });
+}
+
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ShadowGhost',
+      title: 'Shadow Ghost',
       theme: ThemeData.dark(),
       home: HomeScreen(),
     );
@@ -17,97 +34,87 @@ class MyApp extends StatelessWidget {
 }
 
 class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
   @override
-  _HomeScreenState createState() => _HomeScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String _status = 'Not initialized';
-  List<Contact> _contacts = [];
-  bool _isInitialized = false;
+  List<Contact> _contacts = [
+    Contact(
+      name: 'Alice',
+      lastMessage: 'Hello there!',
+      status: ContactStatus.online,
+      timestamp: DateTime.now(),
+    ),
+    Contact(
+      name: 'Bob',
+      lastMessage: 'How are you?',
+      status: ContactStatus.away,
+      timestamp: DateTime.now().subtract(Duration(minutes: 30)),
+    ),
+  ];
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeCore();
-  }
-
-  Future<void> _initializeCore() async {
-    try {
-      final result = await initializeCore();
-      setState(() {
-        _status = result;
-        _isInitialized = true;
-      });
-      await _loadContacts();
-    } catch (e) {
-      setState(() => _status = 'Init error: $e');
-    }
-  }
-
-  Future<void> _loadContacts() async {
-    if (!_isInitialized) return;
-    try {
-      final contacts = await getContacts();
-      setState(() => _contacts = contacts);
-    } catch (e) {
-      setState(() => _status = 'Load contacts error: $e');
-    }
-  }
-
-  Future<void> _generateLink() async {
-    if (!_isInitialized) return;
-    try {
-      final link = await generateMyLink();
-      setState(() => _status = 'My link: $link');
-    } catch (e) {
-      setState(() => _status = 'Generate link error: $e');
-    }
-  }
-
-  Future<void> _startServer() async {
-    if (!_isInitialized) return;
-    try {
-      final result = await startServer();
-      setState(() => _status = result);
-    } catch (e) {
-      setState(() => _status = 'Start server error: $e');
-    }
+  void _addContact() {
+    setState(() {
+      _contacts.add(
+        Contact(
+          name: 'User ${_contacts.length + 1}',
+          lastMessage: 'New contact',
+          status: ContactStatus.offline,
+          timestamp: DateTime.now(),
+        ),
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('ShadowGhost')),
-      body: Column(
-        children: [
-          Padding(padding: EdgeInsets.all(16), child: Text(_status)),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton(
-                onPressed: _generateLink,
-                child: Text('Generate Link'),
-              ),
-              ElevatedButton(
-                onPressed: _startServer,
-                child: Text('Start Server'),
-              ),
-              ElevatedButton(onPressed: _loadContacts, child: Text('Refresh')),
-            ],
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _contacts.length,
-              itemBuilder: (context, index) {
-                final contact = _contacts[index];
-                return ListTile(
-                  title: Text(contact.name),
-                  subtitle: Text(contact.address),
-                  trailing: Text(contact.status.toString()),
-                );
-              },
+      appBar: AppBar(
+        title: Text('Shadow Ghost'),
+        backgroundColor: Colors.black,
+      ),
+      body: ListView.builder(
+        itemCount: _contacts.length,
+        itemBuilder: (context, index) {
+          final contact = _contacts[index];
+          return ListTile(
+            leading: CircleAvatar(
+              backgroundColor: contact.status == ContactStatus.online
+                  ? Colors.green
+                  : contact.status == ContactStatus.away
+                  ? Colors.orange
+                  : Colors.grey,
+              child: Text(contact.name[0]),
             ),
+            title: Text(contact.name),
+            subtitle: Text(contact.lastMessage),
+            trailing: Text(
+              '${contact.timestamp.hour}:${contact.timestamp.minute.toString().padLeft(2, '0')}',
+            ),
+            onTap: () => _showMessageDialog(contact),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addContact,
+        child: Icon(Icons.add),
+      ),
+    );
+  }
+
+  void _showMessageDialog(Contact contact) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(contact.name),
+        content: Text('Chat with ${contact.name}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Close'),
           ),
         ],
       ),

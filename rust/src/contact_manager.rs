@@ -29,6 +29,15 @@ impl fmt::Display for ContactError {
 impl Error for ContactError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactStats {
+    pub total_contacts: usize,
+    pub online_contacts: usize,
+    pub trusted_contacts: usize,
+    pub blocked_contacts: usize,
+    pub pending_contacts: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactBook {
     contacts: HashMap<String, Contact>,
     blocked_contacts: HashMap<String, bool>,
@@ -185,6 +194,51 @@ impl ContactManager {
         self.contact_book.get_contact(contact_id).cloned()
     }
 
+    pub fn get_contact_cloned(&self, contact_id: &str) -> Option<Contact> {
+        self.contact_book.get_contact(contact_id).cloned()
+    }
+
+    pub fn contact_exists(&self, contact_id: &str) -> bool {
+        self.contact_book.contacts.contains_key(contact_id)
+    }
+
+    pub fn get_contact_by_name_ref(&self, name: &str) -> Option<&Contact> {
+        self.contact_book.contacts.values().find(|c| c.name == name)
+    }
+
+    pub fn get_blocked_contacts(&self) -> Vec<Contact> {
+        self.contact_book
+            .blocked_contacts
+            .keys()
+            .filter_map(|id| self.contact_book.get_contact(id))
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_contact_stats(&self) -> ContactStats {
+        let all_contacts = self.get_contacts();
+        let online_count = all_contacts
+            .iter()
+            .filter(|c| matches!(c.status, ContactStatus::Online))
+            .count();
+        let trusted_count = all_contacts
+            .iter()
+            .filter(|c| matches!(c.trust_level, TrustLevel::Trusted))
+            .count();
+        let blocked_count = self.contact_book.blocked_contacts.len();
+
+        ContactStats {
+            total_contacts: all_contacts.len(),
+            online_contacts: online_count,
+            trusted_contacts: trusted_count,
+            blocked_contacts: blocked_count,
+            pending_contacts: all_contacts
+                .iter()
+                .filter(|c| matches!(c.trust_level, TrustLevel::Pending))
+                .count(),
+        }
+    }
+
     pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
         self.contact_book.remove_contact(contact_id)
     }
@@ -297,7 +351,7 @@ impl ContactManager {
     }
 
     pub fn create_contact_from_sg_link(&self, sg_link_data: &str) -> Result<Contact, ContactError> {
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         let decoded_data = general_purpose::STANDARD
             .decode(sg_link_data)
             .map_err(|e| ContactError::InvalidContact(format!("Decode error: {}", e)))?;
