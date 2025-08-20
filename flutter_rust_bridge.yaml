@@ -4,3 +4,4 @@ c_output: bridge_generated.h
 rust_root: rust/
 dart_format_line_length: 120
 web: true
+enable_lifetime: true
