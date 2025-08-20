@@ -20,8 +20,6 @@ flutter run
 
 - **Backend**: Rust
 - **Frontend**: Flutter
-- **Мост**: Flutter Rust Bridge v2
-- **Криптография**: AES-256, RSA-4096, QUIC
 
 ## Настройка среды разработки
 
@@ -41,20 +39,13 @@ flutter doctor
 
 ```bash
 # Если автогенерация не сработала
-flutter packages pub run build_runner build
+dart run build_runner build
 
 # Режим наблюдения для разработки
-flutter packages pub run build_runner watch
+dart run build_runner watch
 
 # Очистка сгенерированных файлов
-flutter packages pub run build_runner clean
-```
-
-#### Ручная установка кодогенератора
-
-```bash
-# Только если автоматическая установка не сработала
-cargo install flutter_rust_bridge_codegen
+dart pub run build_runner clean
 ```
 
 ### Структура проекта
@@ -64,11 +55,11 @@ shadowghost/
 ├── lib/                       # Код Flutter/Dart
 │   └── bridge_generated/      # Автогенерируемый код моста
 ├── rust/                      # Код Rust
+│   ├── api/                   # Экспортируемые функции для Flutter
 │   ├── src/
-│   │   ├── lib.rs            # Точка входа библиотеки Rust
-│   │   └── api.rs            # Экспортируемые функции для Flutter
+│   │   └── lib.rs             # Точка входа библиотеки Rust
 │   └── Cargo.toml
-├── flutter_rust_bridge.yaml  # Конфигурация моста
+├── flutter_rust_bridge.yaml   # Конфигурация моста
 └── pubspec.yaml
 ```
 
@@ -89,7 +80,7 @@ shadowghost/
 
    ```bash
    # Тесты Rust
-   cd rust && cargo test
+   cargo test
 
    # Тесты Flutter
    flutter test
@@ -118,14 +109,12 @@ shadowghost/
 
 ## Рекомендации по Flutter Rust Bridge
 
-### ДЕЛАЙТЕ
-
 - ✅ Размещайте экспортируемые функции в `rust/src/api.rs`
 - ✅ Используйте режим наблюдения во время разработки
 - ✅ Позвольте build_runner управлять генерацией кода
 - ✅ Следуйте конвенциям именования Rust для экспортов
 
-### НЕ ДЕЛАЙТЕ
+### НЕ
 
 - ❌ Редактируйте файлы в `lib/bridge_generated/` вручную
 - ❌ Коммитьте сгенерированные файлы, если они в gitignore
@@ -144,7 +133,7 @@ shadowghost/
 - **Всегда** валидируйте внешние входные данные в Rust и Dart
 - Используйте **безопасные настройки по умолчанию** в криптографических функциях
 - **Тестируйте** границы безопасности моста
-- Сообщайте о проблемах безопасности приватно на: `security@shadowghost.dev`
+- Сообщайте о проблемах безопасности приватно на: ~`security@shadowghost.dev`~
 
 ## Архитектурные заметки
 
