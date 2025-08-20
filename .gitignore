@@ -16,10 +16,8 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code
+.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
@@ -40,7 +38,7 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
+# Android Studio builds
 /android/app/debug
 /android/app/profile
 /android/app/release
@@ -53,10 +51,11 @@ bridge_generated.h
 **/GeneratedPluginRegistrant.*
 **/generated_plugin_registrant.*
 
-# Native builds
+# Rust builds
 rust/target/
+.cargo-lock
 
-# Platform-specific generated files
+# Platform-specific generated/ephemeral files
 **/Flutter/ephemeral/
 **/flutter/ephemeral/
 
@@ -65,21 +64,28 @@ web/flutter_service_worker.js
 
 # Windows
 windows/flutter/ephemeral/
+windows/runner/Release/
+windows/runner/Debug/
+windows/runner/Profile/
 
-# macOS
+# macOS  
 macos/Flutter/ephemeral/
+macos/build/
 
 # Linux
 linux/flutter/ephemeral/
+linux/build/
 
 # iOS
 ios/Flutter/ephemeral/
 ios/Flutter/Generated.xcconfig
-ios/Runner/GeneratedPluginRegistrant.*
+ios/Pods/
+ios/Podfile.lock
+ios/.symlinks/
+ios/Flutter/flutter_export_environment.sh
 
 # Android
-android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
-android/.gradle
+android/.gradle/
 android/captures/
 android/gradlew
 android/gradlew.bat
@@ -87,6 +93,8 @@ android/local.properties
 android/key.properties
 **/*.keystore
 **/*.jks
+android/app/src/main/java/**/GeneratedPluginRegistrant.java
+android/gradle/wrapper/gradle-wrapper.jar
 
 # Other
 Cargo.lock
