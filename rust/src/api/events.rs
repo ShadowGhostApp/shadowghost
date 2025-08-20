@@ -13,7 +13,7 @@ pub async fn start_event_listener() -> Result<String, String> {
         drop(core_guard);
 
         tokio::spawn(async move {
-            let mut event_receiver = core.get_event_bus().subscribe();
+            let mut event_receiver = core.lock().unwrap().get_event_bus().subscribe();
             while let Ok(event) = event_receiver.recv().await {
                 let mut queue = EVENT_QUEUE.lock().unwrap();
                 queue.push_back(event);
@@ -60,7 +60,7 @@ pub async fn emit_custom_event(event_type: String, data: String) -> Result<Strin
             timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
-        core.get_event_bus().emit(custom_event);
+        core.lock().unwrap().get_event_bus().emit(custom_event);
         Ok(format!("Custom event '{}' emitted: {}", event_type, data))
     } else {
         Err("Core not initialized".to_string())

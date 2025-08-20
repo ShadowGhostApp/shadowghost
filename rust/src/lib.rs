@@ -29,9 +29,9 @@ pub use storage::{StorageManager, StorageStats};
 
 pub mod prelude {
     pub use crate::{
-        AppConfig, AppEvent, ChatMessage, ConfigManager, Contact, ContactError, ContactManager,
-        ContactStatus, CoreError, CryptoEvent, CryptoManager, EventBus, NetworkEvent,
-        NetworkManager, Peer, PublicKey, ShadowGhostCore, StorageEvent, StorageManager,
-        StorageStats,
+        AppConfig, AppEvent, ChatMessage, ChatMessageType, ConfigManager, Contact, ContactError,
+        ContactManager, ContactStatus, CoreError, CryptoEvent, CryptoManager, DeliveryStatus,
+        EventBus, NetworkEvent, NetworkManager, Peer, PublicKey, ShadowGhostCore, StorageEvent,
+        StorageManager, StorageStats, TrustLevel,
     };
 }

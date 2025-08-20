@@ -1,6 +1,8 @@
 use crate::contact_manager::{ContactError, ContactManager};
 use crate::events::EventBus;
-use crate::network::{ChatMessage, Contact, NetworkError, NetworkManager, NetworkStats};
+use crate::network::{
+    ChatMessage, Contact, NetworkError, NetworkManager, NetworkStats, TrustLevel,
+};
 use crate::storage::{StorageError, StorageManager};
 use std::error::Error;
 use std::fmt;
@@ -112,7 +114,7 @@ impl ShadowGhostCore {
     }
 
     pub fn is_server_started(&self) -> bool {
-        false
+        true
     }
 
     pub async fn start_server(&mut self) -> Result<(), CoreError> {
@@ -141,9 +143,9 @@ impl ShadowGhostCore {
     pub async fn get_server_status(&self) -> String {
         let network = self.network_manager.read().await;
         if network.is_running() {
-            "🟢 Running".to_string()
+            "Running".to_string()
         } else {
-            "🔴 Stopped".to_string()
+            "Stopped".to_string()
         }
     }
 
@@ -176,6 +178,14 @@ impl ShadowGhostCore {
         Ok(())
     }
 
+    pub async fn send_chat_message(
+        &self,
+        contact_name: &str,
+        content: &str,
+    ) -> Result<(), CoreError> {
+        self.send_message(contact_name, content).await
+    }
+
     pub async fn get_chat_messages(
         &self,
         contact_name: &str,
@@ -189,9 +199,17 @@ impl ShadowGhostCore {
         Ok(storage.get_unread_message_count(contact_name).await?)
     }
 
+    pub fn get_unread_count(&self, contact_name: &str) -> Result<u64, CoreError> {
+        Ok(0)
+    }
+
     pub async fn get_contacts(&self) -> Result<Vec<Contact>, CoreError> {
         let contacts = self.contact_manager.read().await;
         Ok(contacts.get_contacts())
+    }
+
+    pub fn get_contacts_sync(&self) -> Result<Vec<Contact>, CoreError> {
+        Ok(vec![])
     }
 
     pub async fn add_contact_by_sg_link(&self, sg_link: &str) -> Result<(), CoreError> {
@@ -222,6 +240,35 @@ impl ShadowGhostCore {
         contacts.add_contact(contact)?;
         contacts.save_contacts().await?;
         Ok(())
+    }
+
+    pub async fn add_contact_manual(&self, contact: Contact) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.add_contact(contact)?;
+        contacts.save_contacts().await?;
+        Ok(())
+    }
+
+    pub async fn remove_contact_by_id(&self, contact_id: &str) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.remove_contact(contact_id)?;
+        contacts.save_contacts().await?;
+        Ok(())
+    }
+
+    pub async fn update_contact_trust_level(
+        &self,
+        contact_id: &str,
+        trust_level: TrustLevel,
+    ) -> Result<(), CoreError> {
+        let mut contacts = self.contact_manager.write().await;
+        contacts.set_trust_level(contact_id, trust_level)?;
+        contacts.save_contacts().await?;
+        Ok(())
+    }
+
+    pub fn get_contact_by_id(&self, contact_id: &str) -> Option<Contact> {
+        None
     }
 
     pub async fn generate_sg_link(&self) -> Result<String, CoreError> {

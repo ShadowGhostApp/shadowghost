@@ -1,5 +1,6 @@
 use super::core::CORE;
-use crate::prelude::*;
+use crate::network::{Contact, ContactStatus, TrustLevel};
+use chrono::Utc;
 use flutter_rust_bridge::frb;
 
 pub async fn add_contact(name: String, address: String) -> Result<Contact, String> {
@@ -12,11 +13,16 @@ pub async fn add_contact(name: String, address: String) -> Result<Contact, Strin
             name,
             address,
             status: ContactStatus::Offline,
-            last_seen: chrono::Utc::now().timestamp() as u64,
+            last_seen: Some(Utc::now()),
             trust_level: TrustLevel::Unknown,
         };
 
-        match core.add_contact(contact.clone()).await {
+        match core
+            .lock()
+            .unwrap()
+            .add_contact_manual(contact.clone())
+            .await
+        {
             Ok(_) => Ok(contact),
             Err(e) => Err(format!("Failed to add contact: {}", e)),
         }
@@ -29,7 +35,7 @@ pub async fn add_contact(name: String, address: String) -> Result<Contact, Strin
 pub fn get_contacts() -> Result<Vec<Contact>, String> {
     let core_guard = CORE.lock().unwrap();
     if let Some(core) = core_guard.as_ref() {
-        match core.get_contacts() {
+        match core.lock().unwrap().get_contacts_sync() {
             Ok(contacts) => Ok(contacts),
             Err(e) => Err(format!("Failed to get contacts: {}", e)),
         }
@@ -42,7 +48,7 @@ pub async fn remove_contact(contact_id: String) -> Result<String, String> {
     let core_guard = CORE.lock().unwrap();
     if let Some(core) = core_guard.clone() {
         drop(core_guard);
-        match core.remove_contact(&contact_id).await {
+        match core.lock().unwrap().remove_contact_by_id(&contact_id).await {
             Ok(_) => Ok("Contact removed successfully".to_string()),
             Err(e) => Err(format!("Failed to remove contact: {}", e)),
         }
@@ -58,7 +64,12 @@ pub async fn update_contact_trust_level(
     let core_guard = CORE.lock().unwrap();
     if let Some(core) = core_guard.clone() {
         drop(core_guard);
-        match core.update_contact_trust(&contact_id, trust_level).await {
+        match core
+            .lock()
+            .unwrap()
+            .update_contact_trust_level(&contact_id, trust_level)
+            .await
+        {
             Ok(_) => Ok("Contact trust level updated".to_string()),
             Err(e) => Err(format!("Failed to update contact trust: {}", e)),
         }
@@ -71,10 +82,9 @@ pub async fn update_contact_trust_level(
 pub fn get_contact_by_id(contact_id: String) -> Result<Contact, String> {
     let core_guard = CORE.lock().unwrap();
     if let Some(core) = core_guard.as_ref() {
-        match core.get_contact(&contact_id) {
-            Ok(Some(contact)) => Ok(contact),
-            Ok(None) => Err("Contact not found".to_string()),
-            Err(e) => Err(format!("Failed to get contact: {}", e)),
+        match core.lock().unwrap().get_contact_by_id(&contact_id) {
+            Some(contact) => Ok(contact),
+            None => Err("Contact not found".to_string()),
         }
     } else {
         Err("Core not initialized".to_string())

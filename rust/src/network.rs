@@ -25,7 +25,7 @@ impl fmt::Display for NetworkError {
 
 impl Error for NetworkError {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContactStatus {
     Online,
     Offline,
@@ -33,7 +33,7 @@ pub enum ContactStatus {
     Busy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TrustLevel {
     Unknown,
     Pending,
@@ -51,7 +51,7 @@ pub struct Contact {
     pub last_seen: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatMessageType {
     Text,
     File,
@@ -59,7 +59,7 @@ pub enum ChatMessageType {
     Voice,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DeliveryStatus {
     Pending,
     Sent,
@@ -106,7 +106,6 @@ pub struct NetworkManager {
     connected_peers: HashMap<String, PeerData>,
     stats: NetworkStats,
     chats: Arc<RwLock<HashMap<String, Vec<ChatMessage>>>>,
-    _event_bus: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl NetworkManager {
@@ -123,7 +122,6 @@ impl NetworkManager {
                 uptime_seconds: 0,
             },
             chats: Arc::new(RwLock::new(HashMap::new())),
-            _event_bus: None,
         })
     }
 
@@ -162,56 +160,6 @@ impl NetworkManager {
 
     pub async fn get_network_stats(&self) -> Result<NetworkStats, NetworkError> {
         Ok(self.stats.clone())
-    }
-
-    pub fn get_connected_peers(&self) -> Result<Vec<PeerData>, NetworkError> {
-        Ok(self.connected_peers.values().cloned().collect())
-    }
-
-    pub fn connect_to_peer(&mut self, peer_address: &str) -> Result<(), NetworkError> {
-        if !self.is_active {
-            return Err(NetworkError::ConnectionFailed(
-                "Network not active".to_string(),
-            ));
-        }
-
-        let peer_id = format!("peer_{}", uuid::Uuid::new_v4());
-        let peer_data = PeerData {
-            id: peer_id.clone(),
-            name: "Unknown".to_string(),
-            address: peer_address.to_string(),
-            public_key: vec![],
-            connected_at: Utc::now(),
-            last_seen: Utc::now(),
-            bytes_sent: 0,
-            bytes_received: 0,
-        };
-
-        self.connected_peers.insert(peer_id, peer_data);
-        self.stats.connected_peers = self.connected_peers.len() as u32;
-        Ok(())
-    }
-
-    pub fn disconnect_from_peer(&mut self, peer_id: &str) -> Result<(), NetworkError> {
-        self.connected_peers.remove(peer_id);
-        self.stats.connected_peers = self.connected_peers.len() as u32;
-        Ok(())
-    }
-
-    pub fn send_message(
-        &mut self,
-        _contact_id: &str,
-        content: &str,
-    ) -> Result<String, NetworkError> {
-        if !self.is_active {
-            return Err(NetworkError::SendFailed("Network not active".to_string()));
-        }
-
-        let message_id = uuid::Uuid::new_v4().to_string();
-        self.stats.total_messages_sent += 1;
-        self.stats.bytes_sent += content.len() as u64;
-
-        Ok(message_id)
     }
 
     pub async fn send_chat_message(
@@ -254,43 +202,7 @@ impl NetworkManager {
         Ok(chats.get(&chat_key).cloned().unwrap_or_default())
     }
 
-    pub async fn get_chats(&self) -> Result<HashMap<String, Vec<ChatMessage>>, NetworkError> {
-        let chats = self.chats.read().await;
-        Ok(chats.clone())
-    }
-
-    pub async fn get_peer(&self, peer_id: &str) -> Option<PeerData> {
-        self.connected_peers.get(peer_id).cloned()
-    }
-
-    pub fn get_address(&self) -> Result<String, NetworkError> {
-        Ok("127.0.0.1:8080".to_string())
-    }
-
-    pub fn ping_peer(&self, peer_id: &str) -> Result<u64, NetworkError> {
-        if self.connected_peers.contains_key(peer_id) {
-            Ok(50)
-        } else {
-            Err(NetworkError::ConnectionFailed(
-                "Peer not connected".to_string(),
-            ))
-        }
-    }
-
-    pub fn update_config(&mut self, _max_peers: usize, _port: u16) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
-    pub async fn update_peer_address(&self, _new_address: String) -> Result<(), NetworkError> {
-        Ok(())
-    }
-
     pub async fn update_peer_name(&self, _new_name: String) -> Result<(), NetworkError> {
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn get_crypto(&self) -> Option<Arc<RwLock<dyn std::any::Any + Send + Sync>>> {
-        None
     }
 }
