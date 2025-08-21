@@ -1,5 +1,5 @@
-use shadowghost::cli::CliInterface;
 use shadowghost::core::ShadowGhostCore;
+use shadowghost::ui::CliInterface;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

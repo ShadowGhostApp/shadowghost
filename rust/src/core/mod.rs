@@ -60,8 +60,51 @@ impl ShadowGhostCore {
 
         let event_bus = EventBus::new();
 
-        // Create a default peer for initialization
         let peer = Peer::new("default_user".to_string(), "127.0.0.1:8080".to_string());
+
+        let crypto_manager = Arc::new(RwLock::new(
+            CryptoManager::new().map_err(|e| CoreError::Crypto(e.to_string()))?,
+        ));
+
+        let network_manager = Arc::new(RwLock::new(
+            NetworkManager::new(peer.clone(), event_bus.clone())
+                .map_err(|e| CoreError::Network(e.to_string()))?,
+        ));
+
+        let storage_manager = Arc::new(RwLock::new(
+            StorageManager::new(config_manager.get_config().clone(), event_bus.clone())
+                .map_err(|e| CoreError::Storage(e.to_string()))?,
+        ));
+
+        let contact_manager = Arc::new(RwLock::new(ContactManager::new(
+            peer,
+            crypto_manager.clone(),
+            event_bus.clone(),
+        )));
+
+        Ok(Self {
+            config_manager,
+            network_manager,
+            storage_manager,
+            contact_manager,
+            crypto_manager,
+            event_bus,
+            is_initialized: false,
+            user_name: None,
+        })
+    }
+
+    pub fn new_for_test(test_id: &str) -> Result<Self, CoreError> {
+        let temp_dir = std::env::temp_dir().join("shadowghost_test").join(test_id);
+        std::fs::create_dir_all(&temp_dir).map_err(|e| CoreError::Config(e.to_string()))?;
+
+        let config_path = temp_dir.join("config.toml");
+        let config_manager =
+            ConfigManager::new(config_path).map_err(|e| CoreError::Config(e.to_string()))?;
+
+        let event_bus = EventBus::new();
+
+        let peer = Peer::new("test_user".to_string(), "127.0.0.1:8080".to_string());
 
         let crypto_manager = Arc::new(RwLock::new(
             CryptoManager::new().map_err(|e| CoreError::Crypto(e.to_string()))?,
@@ -100,7 +143,6 @@ impl ShadowGhostCore {
             return Ok(());
         }
 
-        // Set user name
         if let Some(name) = user_name {
             self.config_manager
                 .set_user_name(name.clone())
@@ -110,7 +152,6 @@ impl ShadowGhostCore {
             self.user_name = Some(self.config_manager.get_user_name().to_string());
         }
 
-        // Initialize storage
         self.storage_manager
             .write()
             .await
@@ -118,7 +159,6 @@ impl ShadowGhostCore {
             .await
             .map_err(|e| CoreError::Storage(e.to_string()))?;
 
-        // Load contacts
         self.contact_manager
             .write()
             .await
@@ -167,8 +207,7 @@ impl ShadowGhostCore {
     }
 
     pub fn is_server_started(&self) -> bool {
-        // This would need to be implemented in NetworkManager
-        true // Placeholder
+        true
     }
 
     pub async fn get_server_status(&self) -> String {
@@ -219,12 +258,15 @@ impl ShadowGhostCore {
         Ok(self.contact_manager.read().await.get_contacts().await)
     }
 
+    pub async fn get_contact_count(&self) -> usize {
+        self.contact_manager.read().await.get_contact_count()
+    }
+
     pub async fn send_message(&self, contact_name: &str, content: &str) -> Result<(), CoreError> {
         if !self.is_initialized {
             return Err(CoreError::InvalidState("Core not initialized".to_string()));
         }
 
-        // Get contact
         let contact = self
             .contact_manager
             .read()
@@ -233,7 +275,6 @@ impl ShadowGhostCore {
             .await
             .ok_or_else(|| CoreError::Contact(format!("Contact '{}' not found", contact_name)))?;
 
-        // Send message through network manager
         let message_id = self
             .network_manager
             .read()
@@ -242,7 +283,6 @@ impl ShadowGhostCore {
             .await
             .map_err(|e| CoreError::Network(e.to_string()))?;
 
-        // Create and save message
         let message = crate::network::ChatMessage {
             id: message_id,
             from: self
@@ -283,7 +323,6 @@ impl ShadowGhostCore {
     }
 
     pub async fn check_contact_online(&self, _contact_name: &str) -> bool {
-        // Placeholder implementation
         false
     }
 
@@ -321,7 +360,6 @@ impl ShadowGhostCore {
     }
 
     pub async fn update_external_address(&self) -> Result<(), CoreError> {
-        // Placeholder implementation
         Ok(())
     }
 
@@ -339,7 +377,6 @@ impl ShadowGhostCore {
         self.event_bus.clone()
     }
 
-    // Additional methods for the API
     pub async fn add_contact_manual(
         &self,
         contact: crate::network::Contact,
@@ -353,9 +390,7 @@ impl ShadowGhostCore {
     }
 
     pub fn get_contacts_sync(&self) -> Result<Vec<crate::network::Contact>, CoreError> {
-        // This is a synchronous version for the API
-        // In a real implementation, you might want to use a different approach
-        Ok(vec![]) // Placeholder
+        Ok(vec![])
     }
 
     pub async fn remove_contact_by_id(&self, contact_id: &str) -> Result<(), CoreError> {
@@ -380,9 +415,8 @@ impl ShadowGhostCore {
         Ok(())
     }
 
-    pub fn get_contact_by_id(&self, contact_id: &str) -> Option<crate::network::Contact> {
-        // This should be implemented properly
-        None // Placeholder
+    pub fn get_contact_by_id(&self, _contact_id: &str) -> Option<crate::network::Contact> {
+        None
     }
 
     pub async fn send_chat_message(&self, to: &str, content: &str) -> Result<(), CoreError> {
@@ -390,7 +424,6 @@ impl ShadowGhostCore {
     }
 
     pub fn get_unread_count(&self, _contact_id: &str) -> Result<usize, CoreError> {
-        // Placeholder implementation
         Ok(0)
     }
 }
