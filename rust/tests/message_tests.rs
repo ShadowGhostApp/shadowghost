@@ -97,8 +97,8 @@ async fn test_message_sending_and_receiving() -> Result<(), Box<dyn std::error::
         Err(e) => {
             if e.to_string().contains("unavailable") || e.to_string().contains("Connection refused")
             {
-                // Receiver is actually offline despite ping succeeding
-                // This is expected behavior - offline delivery should fail
+
+
             } else {
                 return Err(e.into());
             }
@@ -204,7 +204,7 @@ async fn test_offline_message_handling() -> Result<(), Box<dyn std::error::Error
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // let is_online_initially = setup1.core.check_contact_online("receiver").await;
+
 
     setup2.shutdown().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;

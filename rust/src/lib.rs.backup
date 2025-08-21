@@ -1,23 +1,31 @@
-﻿pub mod api;
+pub mod api;
+pub mod cli;
+pub mod config;
+pub mod contacts;
 pub mod core;
-pub mod data;
+pub mod crypto;
 pub mod events;
-pub mod generated;
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 pub mod network;
-pub mod security;
-pub mod ui;
+pub mod network_discovery;
+pub mod peer;
+pub mod protocol;
+pub mod storage;
+pub mod tls_masking;
 pub mod utils;
 
 pub use api::*;
-pub use core::{AppConfig, ConfigManager, CoreError, ShadowGhostCore};
-pub use data::{ContactError, ContactManager, StorageManager, StorageStats};
+pub use config::{AppConfig, ConfigManager};
+pub use contacts::{ContactError, ContactManager};
+pub use core::{CoreError, ShadowGhostCore};
+pub use crypto::{CryptoManager, EncryptedMessage, PublicKey};
 pub use events::{AppEvent, CryptoEvent, EventBus, NetworkEvent, StorageEvent};
 pub use network::{
     ChatMessage, ChatMessageType, Contact, ContactStatus, DeliveryStatus, NetworkManager,
     NetworkStats, PeerData, TrustLevel,
 };
-pub use security::{CryptoManager, EncryptedMessage, PublicKey};
-pub use ui::Peer;
+pub use peer::Peer;
+pub use storage::{StorageManager, StorageStats};
 
 pub mod prelude {
     pub use crate::{

@@ -165,8 +165,8 @@ mod security_tests {
             "..\\..\\..\\..",
             "/dev/urandom",
             "/proc/self/mem",
-            "con.txt", // Windows reserved name
-            "prn.log", // Windows reserved name
+            "con.txt",
+            "prn.log",
         ];
 
         for malicious_path in malicious_paths {

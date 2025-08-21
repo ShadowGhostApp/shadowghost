@@ -24,7 +24,6 @@ pub async fn initialize_core() -> Result<String, String> {
 
 #[frb(sync)]
 pub fn shutdown_core() -> Result<String, String> {
-    // Для sync функций используем блокирующий tokio
     let rt = tokio::runtime::Handle::current();
     let mut core_guard = rt.block_on(CORE.lock());
     if core_guard.is_some() {

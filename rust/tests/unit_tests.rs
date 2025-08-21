@@ -3,15 +3,18 @@ mod tests {
     use shadowghost::prelude::*;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::RwLock;
     use tokio::time::timeout;
 
-    use common::{init_test_logging, TestSetup};
+    use common::{TestSetup, init_test_logging};
 
     #[tokio::test]
     async fn test_crypto_manager_creation() {
         let crypto = CryptoManager::new().unwrap();
         let public_key = crypto.get_public_key();
+        assert_eq!(public_key.key_data.len(), 32);
         assert_eq!(public_key.key_bytes.len(), 32);
     }
 
@@ -59,7 +62,8 @@ mod tests {
         let peer = Peer::new("test_user".to_string(), "127.0.0.1:8080".to_string());
 
         assert_eq!(peer.name, "test_user");
-        assert_eq!(peer.address, "127.0.0.1:8080");
+        assert_eq!(peer.address, "127.0.0.1");
+        assert_eq!(peer.port, 8080);
         assert!(!peer.id.is_empty());
     }
 
@@ -94,7 +98,7 @@ mod tests {
         let config = config_manager.get_config();
 
         assert_eq!(config.user.name, "user");
-        assert_eq!(config.network.default_port, 8080);
+        assert_eq!(config.network.port, 8080);
 
         config_manager
             .set_user_name("new_user".to_string())
@@ -124,10 +128,11 @@ mod tests {
     async fn test_storage_manager() {
         let temp_dir = std::env::temp_dir().join("shadowghost_storage_test");
         let mut config = AppConfig::default();
-        config.storage.data_dir = temp_dir.clone();
+        config.storage.data_dir = temp_dir.to_string_lossy().to_string();
 
         let event_bus = EventBus::new();
-        let storage_manager = StorageManager::new(config, event_bus).unwrap();
+        let mut storage_manager = StorageManager::new(config, event_bus).unwrap();
+        storage_manager.initialize().await.unwrap();
 
         let mut contacts = HashMap::new();
         let contact = Contact {
@@ -136,7 +141,7 @@ mod tests {
             address: "127.0.0.1:8080".to_string(),
             status: ContactStatus::Online,
             trust_level: TrustLevel::Medium,
-            last_seen: 1234567890,
+            last_seen: Some(chrono::Utc::now()),
         };
         contacts.insert("test_id".to_string(), contact);
 
@@ -153,10 +158,11 @@ mod tests {
     async fn test_storage_chat_history() {
         let temp_dir = std::env::temp_dir().join("shadowghost_chat_test");
         let mut config = AppConfig::default();
-        config.storage.data_dir = temp_dir.clone();
+        config.storage.data_dir = temp_dir.to_string_lossy().to_string();
 
         let event_bus = EventBus::new();
-        let storage_manager = StorageManager::new(config, event_bus).unwrap();
+        let mut storage_manager = StorageManager::new(config, event_bus).unwrap();
+        storage_manager.initialize().await.unwrap();
 
         let chat_message = ChatMessage {
             id: "msg1".to_string(),
@@ -187,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn test_contact_manager_sg_link() {
         let peer = Peer::new("test_user".to_string(), "127.0.0.1:8080".to_string());
-        let crypto = std::sync::Arc::new(tokio::sync::RwLock::new(CryptoManager::new().unwrap()));
+        let crypto = Arc::new(RwLock::new(CryptoManager::new().unwrap()));
         let event_bus = EventBus::new();
 
         let contact_manager = ContactManager::new(peer, crypto, event_bus);
@@ -195,8 +201,15 @@ mod tests {
         let sg_link = contact_manager.generate_sg_link().await.unwrap();
         assert!(sg_link.starts_with("sg://"));
 
+
         let decoded_result = contact_manager.add_contact_by_sg_link(&sg_link).await;
         assert!(decoded_result.is_err());
+        assert!(
+            decoded_result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot add yourself")
+        );
     }
 
     #[tokio::test]
@@ -204,8 +217,8 @@ mod tests {
         let peer1 = Peer::new("user1".to_string(), "127.0.0.1:8080".to_string());
         let peer2 = Peer::new("user2".to_string(), "127.0.0.1:8081".to_string());
 
-        let crypto1 = std::sync::Arc::new(tokio::sync::RwLock::new(CryptoManager::new().unwrap()));
-        let crypto2 = std::sync::Arc::new(tokio::sync::RwLock::new(CryptoManager::new().unwrap()));
+        let crypto1 = Arc::new(RwLock::new(CryptoManager::new().unwrap()));
+        let crypto2 = Arc::new(RwLock::new(CryptoManager::new().unwrap()));
 
         let event_bus1 = EventBus::new();
         let event_bus2 = EventBus::new();
@@ -241,7 +254,7 @@ mod tests {
         let event_bus = EventBus::new();
 
         let network_manager = NetworkManager::new(peer, event_bus).unwrap();
-        let stats = network_manager.get_network_stats().await;
+        let stats = network_manager.get_network_stats().await.unwrap();
 
         assert_eq!(stats.messages_sent, 0);
         assert_eq!(stats.messages_received, 0);
@@ -355,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_sg_link_formats() {
         let peer = Peer::new("test_user".to_string(), "127.0.0.1:8080".to_string());
-        let crypto = std::sync::Arc::new(tokio::sync::RwLock::new(CryptoManager::new().unwrap()));
+        let crypto = Arc::new(RwLock::new(CryptoManager::new().unwrap()));
         let event_bus = EventBus::new();
 
         let contact_manager = ContactManager::new(peer, crypto, event_bus);
@@ -378,7 +391,7 @@ mod tests {
     async fn test_storage_validation() {
         let temp_dir = std::env::temp_dir().join("shadowghost_validation_test");
         let mut config = AppConfig::default();
-        config.storage.data_dir = temp_dir.clone();
+        config.storage.data_dir = temp_dir.to_string_lossy().to_string();
 
         let event_bus = EventBus::new();
         let storage_manager = StorageManager::new(config, event_bus).unwrap();
@@ -396,7 +409,7 @@ mod tests {
     async fn test_storage_stats() {
         let temp_dir = std::env::temp_dir().join("shadowghost_stats_test");
         let mut config = AppConfig::default();
-        config.storage.data_dir = temp_dir.clone();
+        config.storage.data_dir = temp_dir.to_string_lossy().to_string();
 
         let event_bus = EventBus::new();
         let storage_manager = StorageManager::new(config, event_bus).unwrap();
@@ -426,6 +439,8 @@ mod tests {
 
         let updated_peer_info = core.get_peer_info().await.unwrap();
         assert!(updated_peer_info.contains("new_name"));
+
+        core.shutdown().await.unwrap();
     }
 
     #[tokio::test]

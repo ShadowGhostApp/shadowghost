@@ -1,3 +1,5 @@
+use crate::config::AppConfig;
+use crate::events::EventBus;
 use crate::network::{ChatMessage, Contact};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,8 @@ pub struct StorageStats {
     pub total_contacts: u64,
     pub total_messages: u64,
     pub storage_size_bytes: u64,
+    pub data_size_bytes: u64,
+    pub total_chats: u64,
     pub last_backup: Option<DateTime<Utc>>,
 }
 
@@ -41,7 +45,24 @@ impl Default for StorageStats {
             total_contacts: 0,
             total_messages: 0,
             storage_size_bytes: 0,
+            data_size_bytes: 0,
+            total_chats: 0,
             last_backup: None,
+        }
+    }
+}
+
+impl StorageStats {
+    pub fn format_size(&self) -> String {
+        let bytes = self.data_size_bytes;
+        if bytes < 1024 {
+            format!("{} B", bytes)
+        } else if bytes < 1024 * 1024 {
+            format!("{:.1} KB", bytes as f64 / 1024.0)
+        } else if bytes < 1024 * 1024 * 1024 {
+            format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
         }
     }
 }
@@ -81,10 +102,14 @@ pub struct StorageManager {
     chat_storage: ChatStorage,
     contact_storage: ContactStorage,
     stats: StorageStats,
+    event_bus: EventBus,
+    config: AppConfig,
 }
 
 impl StorageManager {
-    pub fn new(base_path: String) -> Result<Self, StorageError> {
+
+    pub fn new(config: AppConfig, event_bus: EventBus) -> Result<Self, StorageError> {
+        let base_path = config.storage.data_path.clone();
         let path = Path::new(&base_path);
         if !path.exists() {
             std::fs::create_dir_all(path).map_err(|e| StorageError::IoError(e.to_string()))?;
@@ -95,6 +120,25 @@ impl StorageManager {
             chat_storage: ChatStorage::default(),
             contact_storage: ContactStorage::default(),
             stats: StorageStats::default(),
+            event_bus,
+            config,
+        })
+    }
+
+
+    pub fn new_with_path(base_path: String) -> Result<Self, StorageError> {
+        let path = Path::new(&base_path);
+        if !path.exists() {
+            std::fs::create_dir_all(path).map_err(|e| StorageError::IoError(e.to_string()))?;
+        }
+
+        Ok(Self {
+            base_path,
+            chat_storage: ChatStorage::default(),
+            contact_storage: ContactStorage::default(),
+            stats: StorageStats::default(),
+            event_bus: EventBus::new(),
+            config: AppConfig::default(),
         })
     }
 
@@ -129,6 +173,22 @@ impl StorageManager {
         Ok(())
     }
 
+    pub async fn save_contacts(
+        &self,
+        contacts: &HashMap<String, Contact>,
+    ) -> Result<(), StorageError> {
+        for contact in contacts.values() {
+            self.contact_storage
+                .contacts
+                .insert(contact.id.clone(), contact.clone());
+        }
+        self.save_contacts_internal().await
+    }
+
+    pub async fn load_contacts(&self) -> Result<HashMap<String, Contact>, StorageError> {
+        Ok(self.contact_storage.contacts.clone())
+    }
+
     pub async fn save_message(
         &mut self,
         chat_id: &str,
@@ -154,6 +214,26 @@ impl StorageManager {
             .unwrap_or_default())
     }
 
+    pub async fn save_chat_history(
+        &self,
+        chat_id: &str,
+        messages: &[ChatMessage],
+    ) -> Result<(), StorageError> {
+        self.chat_storage
+            .messages
+            .insert(chat_id.to_string(), messages.to_vec());
+        self.save_chats().await
+    }
+
+    pub async fn load_chat_history(&self, chat_id: &str) -> Result<Vec<ChatMessage>, StorageError> {
+        Ok(self
+            .chat_storage
+            .messages
+            .get(chat_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
     pub async fn get_all_chats(&self) -> Result<HashMap<String, Vec<ChatMessage>>, StorageError> {
         Ok(self.chat_storage.messages.clone())
     }
@@ -167,6 +247,102 @@ impl StorageManager {
 
     pub async fn get_stats(&self) -> Result<StorageStats, StorageError> {
         Ok(self.stats.clone())
+    }
+
+    pub async fn get_storage_stats(&self) -> Result<StorageStats, StorageError> {
+        Ok(self.stats.clone())
+    }
+
+    pub async fn validate_contacts(&self) -> Result<Vec<String>, StorageError> {
+        let mut issues = Vec::new();
+
+        for (id, contact) in &self.contact_storage.contacts {
+            if contact.id != *id {
+                issues.push(format!("Contact ID mismatch: {} vs {}", contact.id, id));
+            }
+
+            if contact.name.is_empty() {
+                issues.push(format!("Contact {} has empty name", id));
+            }
+
+            if contact.address.is_empty() {
+                issues.push(format!("Contact {} has empty address", id));
+            }
+        }
+
+        Ok(issues)
+    }
+
+    pub async fn validate_chats(&self) -> Result<Vec<String>, StorageError> {
+        let mut issues = Vec::new();
+
+        for (chat_id, messages) in &self.chat_storage.messages {
+            if chat_id.is_empty() {
+                issues.push("Found chat with empty ID".to_string());
+            }
+
+            for (i, message) in messages.iter().enumerate() {
+                if message.id.is_empty() {
+                    issues.push(format!("Message {} in chat {} has empty ID", i, chat_id));
+                }
+
+                if message.content.is_empty() {
+                    issues.push(format!(
+                        "Message {} in chat {} has empty content",
+                        i, chat_id
+                    ));
+                }
+            }
+        }
+
+        Ok(issues)
+    }
+
+    pub async fn save_private_key(&self, key_data: &[u8]) -> Result<(), StorageError> {
+        let keys_dir = Path::new(&self.base_path).join("keys");
+        if !keys_dir.exists() {
+            std::fs::create_dir_all(&keys_dir).map_err(|e| StorageError::IoError(e.to_string()))?;
+        }
+
+        let key_file = keys_dir.join("private.key");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::write(&key_file, key_data)
+                .await
+                .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+            let mut perms = std::fs::metadata(&key_file)
+                .map_err(|e| StorageError::IoError(e.to_string()))?
+                .permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&key_file, perms)
+                .map_err(|e| StorageError::IoError(e.to_string()))?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            tokio::fs::write(&key_file, key_data)
+                .await
+                .map_err(|e| StorageError::IoError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn load_private_key(&self) -> Result<Option<Vec<u8>>, StorageError> {
+        let key_file = Path::new(&self.base_path).join("keys").join("private.key");
+
+        if !key_file.exists() {
+            return Ok(None);
+        }
+
+        let key_data = tokio::fs::read(&key_file)
+            .await
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        Ok(Some(key_data))
     }
 
     pub async fn backup(&mut self) -> Result<String, StorageError> {
@@ -203,7 +379,7 @@ impl StorageManager {
         self.chat_storage = backup_data.chats;
         self.stats = backup_data.stats;
 
-        self.save_contacts().await?;
+        self.save_contacts_internal().await?;
         self.save_chats().await?;
         Ok(())
     }
@@ -222,7 +398,7 @@ impl StorageManager {
         Ok(())
     }
 
-    async fn save_contacts(&self) -> Result<(), StorageError> {
+    async fn save_contacts_internal(&self) -> Result<(), StorageError> {
         let contacts_path = format!("{}/contacts.json", self.base_path);
         let data = serde_json::to_string_pretty(&self.contact_storage)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
@@ -266,10 +442,12 @@ impl StorageManager {
             .values()
             .map(|messages| messages.len() as u64)
             .sum();
+        self.stats.total_chats = self.chat_storage.messages.len() as u64;
 
         let contacts_size = self.estimate_size(&self.contact_storage)?;
         let chats_size = self.estimate_size(&self.chat_storage)?;
         self.stats.storage_size_bytes = contacts_size + chats_size;
+        self.stats.data_size_bytes = self.stats.storage_size_bytes;
 
         Ok(())
     }
@@ -285,7 +463,7 @@ impl StorageManager {
         self.chat_storage = ChatStorage::default();
         self.stats = StorageStats::default();
 
-        self.save_contacts().await?;
+        self.save_contacts_internal().await?;
         self.save_chats().await?;
         Ok(())
     }

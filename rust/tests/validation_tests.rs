@@ -160,7 +160,6 @@ async fn test_duplicate_contact_handling() -> Result<(), Box<dyn std::error::Err
     let _result: Result<(), shadowghost::CoreError> =
         setup1.core.add_contact_by_sg_link(&sg_link2).await;
 
-    // Should either succeed (update) or fail gracefully
     let contacts_second = setup1.core.get_contacts().await?;
     assert_eq!(
         contacts_second.len(),
@@ -278,7 +277,6 @@ async fn test_contact_validation_edge_cases() -> Result<(), Box<dyn std::error::
 
     println!("🧪 Testing contact validation edge cases");
 
-    // Test multiple rapid additions of different contacts
     let setup2 = TestSetup::new("rapid1").await?;
     let setup3 = TestSetup::new("rapid2").await?;
     let setup4 = TestSetup::new("rapid3").await?;

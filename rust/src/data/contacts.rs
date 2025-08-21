@@ -1,9 +1,14 @@
+use crate::crypto::CryptoManager;
+use crate::events::EventBus;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
+use crate::peer::Peer;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub enum ContactError {
@@ -53,14 +58,13 @@ impl ContactBook {
 
     pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
         if self.contacts.contains_key(&contact.id) {
-            return Err(ContactError::ContactExists(format!(
-                "Contact with ID {} already exists",
-                contact.id
-            )));
-        }
 
-        self.contacts.insert(contact.id.clone(), contact);
-        Ok(())
+            self.contacts.insert(contact.id.clone(), contact);
+            Ok(())
+        } else {
+            self.contacts.insert(contact.id.clone(), contact);
+            Ok(())
+        }
     }
 
     pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
@@ -126,40 +130,138 @@ impl ContactBook {
 }
 
 pub struct ContactManager {
+    peer: Peer,
+    crypto: Arc<RwLock<CryptoManager>>,
+    event_bus: EventBus,
     contact_book: ContactBook,
-    storage_path: String,
+    storage_path: Option<String>,
 }
 
 impl ContactManager {
-    pub fn new(storage_path: String) -> Result<Self, ContactError> {
-        Ok(Self {
+
+    pub fn new(peer: Peer, crypto: Arc<RwLock<CryptoManager>>, event_bus: EventBus) -> Self {
+        Self {
+            peer,
+            crypto,
+            event_bus,
             contact_book: ContactBook::new(),
-            storage_path,
+            storage_path: None,
+        }
+    }
+
+
+    pub fn new_with_storage(storage_path: String) -> Result<Self, ContactError> {
+        let peer = Peer::new("default_user".to_string(), "127.0.0.1:8080".to_string());
+        let crypto = Arc::new(RwLock::new(
+            CryptoManager::new().map_err(|e| ContactError::InvalidContact(e.to_string()))?,
+        ));
+        let event_bus = EventBus::new();
+
+        Ok(Self {
+            peer,
+            crypto,
+            event_bus,
+            contact_book: ContactBook::new(),
+            storage_path: Some(storage_path),
         })
     }
 
     pub async fn load_contacts(&mut self) -> Result<(), ContactError> {
-        match tokio::fs::read_to_string(&self.storage_path).await {
-            Ok(data) => match serde_json::from_str::<ContactBook>(&data) {
-                Ok(book) => {
-                    self.contact_book = book;
-                    Ok(())
-                }
-                Err(e) => Err(ContactError::SerializationError(e.to_string())),
-            },
-            Err(_) => Ok(()),
+        if let Some(ref storage_path) = self.storage_path {
+            match tokio::fs::read_to_string(storage_path).await {
+                Ok(data) => match serde_json::from_str::<ContactBook>(&data) {
+                    Ok(book) => {
+                        self.contact_book = book;
+                        Ok(())
+                    }
+                    Err(e) => Err(ContactError::SerializationError(e.to_string())),
+                },
+                Err(_) => Ok(()),
+            }
+        } else {
+            Ok(())
         }
     }
 
+    pub async fn load_contacts(
+        &mut self,
+        contacts: HashMap<String, Contact>,
+    ) -> Result<(), ContactError> {
+        for contact in contacts.into_values() {
+            self.contact_book.add_contact(contact)?;
+        }
+        Ok(())
+    }
+
     pub async fn save_contacts(&self) -> Result<(), ContactError> {
-        let data = serde_json::to_string_pretty(&self.contact_book)
+        if let Some(ref storage_path) = self.storage_path {
+            let data = serde_json::to_string_pretty(&self.contact_book)
+                .map_err(|e| ContactError::SerializationError(e.to_string()))?;
+
+            tokio::fs::write(storage_path, data)
+                .await
+                .map_err(|e| ContactError::IoError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn generate_sg_link(&self) -> Result<String, ContactError> {
+        let peer_data = PeerData {
+            id: self.peer.id.clone(),
+            name: self.peer.name.clone(),
+            address: self.peer.get_full_address(),
+            public_key: self.peer.public_key.clone(),
+            connected_at: Utc::now(),
+            last_seen: Utc::now(),
+            bytes_sent: 0,
+            bytes_received: 0,
+        };
+
+        let json_data = serde_json::to_string(&peer_data)
             .map_err(|e| ContactError::SerializationError(e.to_string()))?;
 
-        tokio::fs::write(&self.storage_path, data)
-            .await
-            .map_err(|e| ContactError::IoError(e.to_string()))?;
+        use base64::{Engine as _, engine::general_purpose};
+        let encoded = general_purpose::STANDARD.encode(json_data);
+        Ok(format!("sg://{}", encoded))
+    }
 
-        Ok(())
+    pub async fn add_contact_by_sg_link(&self, sg_link: &str) -> Result<Contact, ContactError> {
+        if !sg_link.starts_with("sg://") {
+            return Err(ContactError::InvalidContact(
+                "Invalid SG link format".to_string(),
+            ));
+        }
+
+        let link_data = &sg_link[5..];
+
+        use base64::{Engine as _, engine::general_purpose};
+        let decoded_data = general_purpose::STANDARD
+            .decode(link_data)
+            .map_err(|e| ContactError::InvalidContact(format!("Decode error: {}", e)))?;
+
+        let data_str = String::from_utf8(decoded_data)
+            .map_err(|_| ContactError::InvalidContact("UTF-8 conversion failed".to_string()))?;
+
+        let peer_data: PeerData = serde_json::from_str(&data_str)
+            .map_err(|_| ContactError::InvalidContact("JSON parse failed".to_string()))?;
+
+
+        if peer_data.name == self.peer.name {
+            return Err(ContactError::InvalidContact(
+                "Cannot add yourself as contact".to_string(),
+            ));
+        }
+
+        let contact = Contact {
+            id: peer_data.id,
+            name: peer_data.name,
+            address: peer_data.address,
+            status: ContactStatus::Offline,
+            trust_level: TrustLevel::Pending,
+            last_seen: Some(peer_data.last_seen),
+        };
+
+        Ok(contact)
     }
 
     pub fn add_contact_from_peer_data(&mut self, peer_data: &PeerData) -> Result<(), ContactError> {
@@ -179,15 +281,19 @@ impl ContactManager {
         self.contact_book.add_contact(contact)
     }
 
-    pub fn get_contacts(&self) -> Vec<Contact> {
+    pub async fn get_contacts(&self) -> Vec<Contact> {
         self.contact_book.get_contacts()
     }
 
-    pub fn get_contact_by_name(&self, name: &str) -> Option<Contact> {
+    pub async fn get_contact_by_name(&self, name: &str) -> Option<Contact> {
         self.contact_book
             .get_contacts()
             .into_iter()
             .find(|c| c.name == name)
+    }
+
+    pub async fn get_contact_by_id(&self, contact_id: &str) -> Option<Contact> {
+        self.contact_book.get_contact(contact_id).cloned()
     }
 
     pub fn get_contact(&self, contact_id: &str) -> Option<Contact> {

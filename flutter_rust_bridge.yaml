@@ -1,6 +1,11 @@
 rust_input: crate::api
-dart_output: lib/bridge_generated
+dart_output: lib/bridge_generated.dart
+rust_output: rust/src/generated/frb_generated.rs
 rust_root: rust/
+llvm_path: []
 dart_format_line_length: 120
+extra:
+  dart_format: true
+  dart_enums_style: true
 web: true
 enable_lifetime: true

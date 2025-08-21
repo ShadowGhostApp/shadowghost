@@ -26,7 +26,6 @@ pub async fn add_contact(name: String, address: String) -> Result<Contact, Strin
 
 #[frb(sync)]
 pub fn get_contacts() -> Result<Vec<Contact>, String> {
-    // Для sync функций используем блокирующий tokio
     let rt = tokio::runtime::Handle::current();
     let core_guard = rt.block_on(CORE.lock());
     if let Some(core) = core_guard.as_ref() {
