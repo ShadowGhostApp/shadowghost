@@ -410,7 +410,9 @@ impl CliInterface {
         match self.core.add_contact_by_sg_link(sg_link).await {
             Ok(()) => {
                 println!(" ✅ Contact added successfully!");
-                println!("💡 Use 'contacts' command to view all contacts, or 'chat <name>' to start chatting.");
+                println!(
+                    "💡 Use 'contacts' command to view all contacts, or 'chat <name>' to start chatting."
+                );
             }
             Err(e) => match e {
                 crate::core::CoreError::Contact(msg) => {
@@ -525,7 +527,9 @@ impl CliInterface {
                 println!("   exit - exit chat");
 
                 if !self.core.is_server_started() {
-                    println!("⚠️ Warning: Server not running. You won't receive replies until you execute 'start' command");
+                    println!(
+                        "⚠️ Warning: Server not running. You won't receive replies until you execute 'start' command"
+                    );
                 }
 
                 self.show_chat_history(contact_name).await;

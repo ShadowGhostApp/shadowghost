@@ -29,13 +29,11 @@ impl Error for CryptoError {}
 pub struct PublicKey {
     pub key_data: Vec<u8>,
     pub algorithm: String,
-
 }
 
 impl PublicKey {
     pub fn new(key_data: Vec<u8>) -> Self {
         Self {
-            key_bytes: key_data.clone(),
             key_data,
             algorithm: "Ed25519".to_string(),
         }
@@ -70,9 +68,8 @@ impl CryptoManager {
         self.public_key.clone()
     }
 
-
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
-
+        // Simple XOR encryption for demonstration purposes
         let mut encrypted = data.to_vec();
         for (i, byte) in encrypted.iter_mut().enumerate() {
             *byte ^= self.private_key[i % self.private_key.len()];
@@ -81,7 +78,7 @@ impl CryptoManager {
     }
 
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
-
+        // Simple XOR decryption for demonstration purposes
         let mut decrypted = data.to_vec();
         for (i, byte) in decrypted.iter_mut().enumerate() {
             *byte ^= self.private_key[i % self.private_key.len()];
@@ -110,7 +107,7 @@ impl CryptoManager {
     }
 
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
-
+        // Simple signature for demonstration purposes
         let mut signature = Vec::new();
         let hash = self.hash_data(data);
         signature.extend_from_slice(&hash);
@@ -122,7 +119,7 @@ impl CryptoManager {
         &self,
         data: &[u8],
         signature: &[u8],
-        public_key: &PublicKey,
+        _public_key: &PublicKey,
     ) -> Result<bool, CryptoError> {
         if signature.len() < 48 {
             // 32 (hash) + 16 (key part)
@@ -139,7 +136,7 @@ impl CryptoManager {
         &self,
         other_public_key: &PublicKey,
     ) -> Result<Vec<u8>, CryptoError> {
-
+        // Simple shared secret derivation for demonstration purposes
         let mut secret = Vec::new();
         for i in 0..32 {
             let a = self.private_key[i % self.private_key.len()];
@@ -150,7 +147,7 @@ impl CryptoManager {
     }
 
     pub fn hash_data(&self, data: &[u8]) -> Vec<u8> {
-
+        // Simple hash function for demonstration purposes
         let mut hash = vec![0u8; 32];
         for (i, &byte) in data.iter().enumerate() {
             hash[i % 32] ^= byte;
@@ -189,7 +186,7 @@ impl CryptoManager {
     }
 
     fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>, CryptoError> {
-
+        // Simple public key derivation for demonstration purposes
         let mut public_key = vec![0u8; 32];
         for i in 0..32 {
             public_key[i] = private_key[i].wrapping_mul(7).wrapping_add(13);

@@ -9,7 +9,7 @@ pub mod ui;
 pub mod utils;
 
 pub use api::*;
-pub use core::{AppConfig, ConfigManager, CoreError, ShadowGhostCore};
+pub use core::{AppConfig, ConfigManager, CoreError, Peer, ShadowGhostCore};
 pub use data::{ContactError, ContactManager, StorageManager, StorageStats};
 pub use events::{AppEvent, CryptoEvent, EventBus, NetworkEvent, StorageEvent};
 pub use network::{
@@ -17,7 +17,6 @@ pub use network::{
     NetworkStats, PeerData, TrustLevel,
 };
 pub use security::{CryptoManager, EncryptedMessage, PublicKey};
-pub use ui::Peer;
 
 pub mod prelude {
     pub use crate::{

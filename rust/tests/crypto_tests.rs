@@ -5,8 +5,7 @@ mod security_tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
-    mod common;
-    use common::{init_test_logging, TestSetup};
+    use common::{TestSetup, init_test_logging};
 
     #[tokio::test]
     async fn test_crypto_key_uniqueness() {
@@ -63,29 +62,39 @@ mod security_tests {
         let public_key1 = crypto1.get_public_key();
         let public_key2 = crypto2.get_public_key();
 
-        assert!(crypto1
-            .verify_signature(data, &signature1, &public_key1)
-            .unwrap());
+        assert!(
+            crypto1
+                .verify_signature(data, &signature1, &public_key1)
+                .unwrap()
+        );
 
-        assert!(!crypto2
-            .verify_signature(data, &signature1, &public_key2)
-            .unwrap());
-        assert!(!crypto1
-            .verify_signature(data, &signature1, &public_key2)
-            .unwrap());
+        assert!(
+            !crypto2
+                .verify_signature(data, &signature1, &public_key2)
+                .unwrap()
+        );
+        assert!(
+            !crypto1
+                .verify_signature(data, &signature1, &public_key2)
+                .unwrap()
+        );
 
         let different_data = b"tampered message";
-        assert!(!crypto1
-            .verify_signature(different_data, &signature1, &public_key1)
-            .unwrap());
+        assert!(
+            !crypto1
+                .verify_signature(different_data, &signature1, &public_key1)
+                .unwrap()
+        );
 
         for i in 0..signature1.len() {
             let mut tampered_signature = signature1.clone();
             tampered_signature[i] = tampered_signature[i].wrapping_add(1);
 
-            assert!(!crypto1
-                .verify_signature(data, &tampered_signature, &public_key1)
-                .unwrap());
+            assert!(
+                !crypto1
+                    .verify_signature(data, &tampered_signature, &public_key1)
+                    .unwrap()
+            );
         }
     }
 

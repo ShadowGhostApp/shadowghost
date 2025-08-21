@@ -1,4 +1,4 @@
-use crate::config::AppConfig;
+use crate::core::config::AppConfig;
 use crate::events::EventBus;
 use crate::network::{ChatMessage, Contact};
 use chrono::{DateTime, Utc};
@@ -107,7 +107,6 @@ pub struct StorageManager {
 }
 
 impl StorageManager {
-
     pub fn new(config: AppConfig, event_bus: EventBus) -> Result<Self, StorageError> {
         let base_path = config.storage.data_path.clone();
         let path = Path::new(&base_path);
@@ -124,7 +123,6 @@ impl StorageManager {
             config,
         })
     }
-
 
     pub fn new_with_path(base_path: String) -> Result<Self, StorageError> {
         let path = Path::new(&base_path);
@@ -143,7 +141,7 @@ impl StorageManager {
     }
 
     pub async fn initialize(&mut self) -> Result<(), StorageError> {
-        self.load_contacts().await?;
+        self.load_contacts_internal().await?;
         self.load_chats().await?;
         self.update_stats().await?;
         Ok(())
@@ -153,7 +151,7 @@ impl StorageManager {
         self.contact_storage
             .contacts
             .insert(contact.id.clone(), contact.clone());
-        self.save_contacts().await?;
+        self.save_contacts_internal().await?;
         self.update_stats().await?;
         Ok(())
     }
@@ -168,13 +166,13 @@ impl StorageManager {
 
     pub async fn delete_contact(&mut self, contact_id: &str) -> Result<(), StorageError> {
         self.contact_storage.contacts.remove(contact_id);
-        self.save_contacts().await?;
+        self.save_contacts_internal().await?;
         self.update_stats().await?;
         Ok(())
     }
 
     pub async fn save_contacts(
-        &self,
+        &mut self,
         contacts: &HashMap<String, Contact>,
     ) -> Result<(), StorageError> {
         for contact in contacts.values() {
@@ -185,6 +183,7 @@ impl StorageManager {
         self.save_contacts_internal().await
     }
 
+    // Remove the duplicate load_contacts method
     pub async fn load_contacts(&self) -> Result<HashMap<String, Contact>, StorageError> {
         Ok(self.contact_storage.contacts.clone())
     }
@@ -215,7 +214,7 @@ impl StorageManager {
     }
 
     pub async fn save_chat_history(
-        &self,
+        &mut self,
         chat_id: &str,
         messages: &[ChatMessage],
     ) -> Result<(), StorageError> {
@@ -384,7 +383,7 @@ impl StorageManager {
         Ok(())
     }
 
-    async fn load_contacts(&mut self) -> Result<(), StorageError> {
+    async fn load_contacts_internal(&mut self) -> Result<(), StorageError> {
         let contacts_path = format!("{}/contacts.json", self.base_path);
         match tokio::fs::read_to_string(&contacts_path).await {
             Ok(data) => {

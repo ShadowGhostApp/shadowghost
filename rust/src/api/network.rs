@@ -20,6 +20,9 @@ pub fn get_network_stats() -> Result<NetworkStats, String> {
         bytes_sent: 0,
         bytes_received: 0,
         uptime_seconds: 0,
+        messages_sent: 0,
+        messages_received: 0,
+        total_connections: 0,
     })
 }
 

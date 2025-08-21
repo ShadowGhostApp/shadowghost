@@ -1,7 +1,7 @@
-use crate::crypto::CryptoManager;
+use crate::core::peer::Peer;
 use crate::events::EventBus;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
-use crate::peer::Peer;
+use crate::security::crypto::CryptoManager;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,14 +57,8 @@ impl ContactBook {
     }
 
     pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
-        if self.contacts.contains_key(&contact.id) {
-
-            self.contacts.insert(contact.id.clone(), contact);
-            Ok(())
-        } else {
-            self.contacts.insert(contact.id.clone(), contact);
-            Ok(())
-        }
+        self.contacts.insert(contact.id.clone(), contact);
+        Ok(())
     }
 
     pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
@@ -138,7 +132,6 @@ pub struct ContactManager {
 }
 
 impl ContactManager {
-
     pub fn new(peer: Peer, crypto: Arc<RwLock<CryptoManager>>, event_bus: EventBus) -> Self {
         Self {
             peer,
@@ -148,7 +141,6 @@ impl ContactManager {
             storage_path: None,
         }
     }
-
 
     pub fn new_with_storage(storage_path: String) -> Result<Self, ContactError> {
         let peer = Peer::new("default_user".to_string(), "127.0.0.1:8080".to_string());
@@ -183,16 +175,7 @@ impl ContactManager {
         }
     }
 
-    pub async fn load_contacts(
-        &mut self,
-        contacts: HashMap<String, Contact>,
-    ) -> Result<(), ContactError> {
-        for contact in contacts.into_values() {
-            self.contact_book.add_contact(contact)?;
-        }
-        Ok(())
-    }
-
+    // Remove the duplicate load_contacts method - keeping only the one above
     pub async fn save_contacts(&self) -> Result<(), ContactError> {
         if let Some(ref storage_path) = self.storage_path {
             let data = serde_json::to_string_pretty(&self.contact_book)
@@ -244,7 +227,6 @@ impl ContactManager {
 
         let peer_data: PeerData = serde_json::from_str(&data_str)
             .map_err(|_| ContactError::InvalidContact("JSON parse failed".to_string()))?;
-
 
         if peer_data.name == self.peer.name {
             return Err(ContactError::InvalidContact(
@@ -322,7 +304,7 @@ impl ContactManager {
     }
 
     pub fn get_contact_stats(&self) -> ContactStats {
-        let all_contacts = self.get_contacts();
+        let all_contacts = self.contact_book.get_contacts();
         let online_count = all_contacts
             .iter()
             .filter(|c| matches!(c.status, ContactStatus::Online))
