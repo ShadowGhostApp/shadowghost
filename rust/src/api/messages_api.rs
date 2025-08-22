@@ -1,5 +1,5 @@
-use super::core::CORE;
-use crate::network::{ChatMessage, ChatMessageType, DeliveryStatus};
+use super::core_api::CORE;
+use crate::network::manager::{ChatMessage, ChatMessageType, DeliveryStatus};
 use chrono::Utc;
 use flutter_rust_bridge::frb;
 

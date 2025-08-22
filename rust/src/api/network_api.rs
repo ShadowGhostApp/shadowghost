@@ -1,4 +1,4 @@
-use crate::{NetworkStats, PeerData};
+use crate::network::manager::{NetworkStats, PeerData};
 use flutter_rust_bridge::frb;
 
 #[frb(sync)]

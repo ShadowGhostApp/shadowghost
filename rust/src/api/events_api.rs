@@ -1,5 +1,5 @@
-use super::core::CORE;
-use crate::prelude::*;
+use super::core_api::CORE;
+use crate::events::bus::AppEvent;
 use flutter_rust_bridge::frb;
 use std::collections::VecDeque;
 use std::sync::{LazyLock, Mutex};

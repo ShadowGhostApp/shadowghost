@@ -1,11 +1,5 @@
-pub mod contacts;
-pub mod core;
-pub mod events;
-pub mod messages;
-pub mod network;
-
-pub use contacts::*;
-pub use core::*;
-pub use events::*;
-pub use messages::*;
-pub use network::*;
+pub mod contacts_api;
+pub mod core_api;
+pub mod events_api;
+pub mod messages_api;
+pub mod network_api;
