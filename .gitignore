@@ -9,6 +9,7 @@
 .history
 .svn/
 migrate_working_dir/
+git.diff
 
 # IntelliJ related
 *.iml
@@ -96,5 +97,5 @@ android/app/src/main/java/**/GeneratedPluginRegistrant.java
 android/gradle/wrapper/gradle-wrapper.jar
 
 # Other
-Cargo.lock
-git.diff
+**/*bridge_generated*
+config.toml

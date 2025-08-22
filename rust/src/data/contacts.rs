@@ -1,14 +1,10 @@
 use crate::core::peer::Peer;
-use crate::events::EventBus;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
-use crate::security::crypto::CryptoManager;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub enum ContactError {
@@ -125,18 +121,14 @@ impl ContactBook {
 
 pub struct ContactManager {
     peer: Peer,
-    crypto: Arc<RwLock<CryptoManager>>,
-    event_bus: EventBus,
     contact_book: ContactBook,
     storage_path: Option<String>,
 }
 
 impl ContactManager {
-    pub fn new(peer: Peer, crypto: Arc<RwLock<CryptoManager>>, event_bus: EventBus) -> Self {
+    pub fn new(peer: Peer) -> Self {
         Self {
             peer,
-            crypto,
-            event_bus,
             contact_book: ContactBook::new(),
             storage_path: None,
         }
@@ -144,15 +136,9 @@ impl ContactManager {
 
     pub fn new_with_storage(storage_path: String) -> Result<Self, ContactError> {
         let peer = Peer::new("default_user".to_string(), "127.0.0.1:8080".to_string());
-        let crypto = Arc::new(RwLock::new(
-            CryptoManager::new().map_err(|e| ContactError::InvalidContact(e.to_string()))?,
-        ));
-        let event_bus = EventBus::new();
 
         Ok(Self {
             peer,
-            crypto,
-            event_bus,
             contact_book: ContactBook::new(),
             storage_path: Some(storage_path),
         })

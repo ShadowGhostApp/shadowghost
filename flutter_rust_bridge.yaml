@@ -1,6 +1,6 @@
 rust_input: crate::api
-dart_output: lib/bridge_generated.dart
+dart_output: lib/bridge_generated
 rust_root: rust/
-dart_format_line_length: 120
+dart_format_line_length: 50
 web: true
 enable_lifetime: true

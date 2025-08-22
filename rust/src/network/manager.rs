@@ -271,7 +271,7 @@ impl NetworkManager {
         chats.clone()
     }
 
-    pub async fn update_peer_name(&self, new_name: String) -> Result<(), NetworkError> {
+    pub async fn update_peer_name(&self) -> Result<(), NetworkError> {
         // Note: This would need proper implementation to update the peer name
         // For now, this is a placeholder
         Ok(())

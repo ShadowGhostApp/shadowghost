@@ -74,7 +74,7 @@ fn wire__crate__api__contacts__add_contact_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            crate::api::contacts::add_contact(api_name, api_address).await?;
+                            crate::api::contacts_api::add_contact(api_name, api_address).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -106,7 +106,7 @@ fn wire__crate__api__events__clear_event_queue_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::events::clear_event_queue())?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::events_api::clear_event_queue())?;
                 Ok(output_ok)
             })())
         },
@@ -136,7 +136,7 @@ fn wire__crate__api__network__connect_to_peer_impl(
             let api_peer_address = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::connect_to_peer(api_peer_address)?;
+                let output_ok = crate::api::network_api::connect_to_peer(api_peer_address)?;
                 Ok(output_ok)
             })())
         },
@@ -166,7 +166,7 @@ fn wire__crate__api__network__disconnect_from_peer_impl(
             let api_peer_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::disconnect_from_peer(api_peer_id)?;
+                let output_ok = crate::api::network_api::disconnect_from_peer(api_peer_id)?;
                 Ok(output_ok)
             })())
         },
@@ -201,7 +201,7 @@ fn wire__crate__api__events__emit_custom_event_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            crate::api::events::emit_custom_event(api_event_type, api_data).await?;
+                            crate::api::events_api::emit_custom_event(api_event_type, api_data).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -236,7 +236,7 @@ fn wire__crate__api__core__generate_my_link_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::core::generate_my_link().await?;
+                        let output_ok = crate::api::core_api::generate_my_link().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -268,7 +268,7 @@ fn wire__crate__api__network__get_connected_peers_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::get_connected_peers()?;
+                let output_ok = crate::api::network_api::get_connected_peers()?;
                 Ok(output_ok)
             })())
         },
@@ -298,7 +298,7 @@ fn wire__crate__api__contacts__get_contact_by_id_impl(
             let api_contact_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::contacts::get_contact_by_id(api_contact_id)?;
+                let output_ok = crate::api::contacts_api::get_contact_by_id(api_contact_id)?;
                 Ok(output_ok)
             })())
         },
@@ -327,7 +327,7 @@ fn wire__crate__api__contacts__get_contacts_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::contacts::get_contacts()?;
+                let output_ok = crate::api::contacts_api::get_contacts()?;
                 Ok(output_ok)
             })())
         },
@@ -356,7 +356,7 @@ fn wire__crate__api__events__get_event_queue_size_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::events::get_event_queue_size())?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::events_api::get_event_queue_size())?;
                 Ok(output_ok)
             })())
         },
@@ -391,7 +391,7 @@ fn wire__crate__api__messages__get_messages_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::messages::get_messages(
+                        let output_ok = crate::api::messages_api::get_messages(
                             api_contact_id,
                             api_limit,
                             api__offset,
@@ -428,7 +428,7 @@ fn wire__crate__api__network__get_my_network_address_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::get_my_network_address()?;
+                let output_ok = crate::api::network_api::get_my_network_address()?;
                 Ok(output_ok)
             })())
         },
@@ -457,7 +457,7 @@ fn wire__crate__api__network__get_network_stats_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::get_network_stats()?;
+                let output_ok = crate::api::network_api::get_network_stats()?;
                 Ok(output_ok)
             })())
         },
@@ -486,7 +486,7 @@ fn wire__crate__api__events__get_pending_events_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::events::get_pending_events())?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::events_api::get_pending_events())?;
                 Ok(output_ok)
             })())
         },
@@ -521,7 +521,7 @@ fn wire__crate__api__messages__get_recent_messages_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            crate::api::messages::get_recent_messages(api_contact_id, api_limit)
+                            crate::api::messages_api::get_recent_messages(api_contact_id, api_limit)
                                 .await?;
                         Ok(output_ok)
                     })()
@@ -555,7 +555,7 @@ fn wire__crate__api__messages__get_unread_message_count_impl(
             let api_contact_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::messages::get_unread_message_count(api_contact_id)?;
+                let output_ok = crate::api::messages_api::get_unread_message_count(api_contact_id)?;
                 Ok(output_ok)
             })())
         },
@@ -584,7 +584,7 @@ fn wire__crate__api__events__has_pending_events_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::events::has_pending_events())?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::events_api::has_pending_events())?;
                 Ok(output_ok)
             })())
         },
@@ -616,7 +616,7 @@ fn wire__crate__api__core__initialize_core_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::core::initialize_core().await?;
+                        let output_ok = crate::api::core_api::initialize_core().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -648,7 +648,7 @@ fn wire__crate__api__core__is_core_initialized_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::core::is_core_initialized())?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::core_api::is_core_initialized())?;
                 Ok(output_ok)
             })())
         },
@@ -677,7 +677,7 @@ fn wire__crate__api__network__is_network_active_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::is_network_active()?;
+                let output_ok = crate::api::network_api::is_network_active()?;
                 Ok(output_ok)
             })())
         },
@@ -707,7 +707,7 @@ fn wire__crate__api__network__ping_peer_impl(
             let api_peer_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::ping_peer(api_peer_id)?;
+                let output_ok = crate::api::network_api::ping_peer(api_peer_id)?;
                 Ok(output_ok)
             })())
         },
@@ -741,7 +741,7 @@ fn wire__crate__api__contacts__remove_contact_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            crate::api::contacts::remove_contact(api_contact_id).await?;
+                            crate::api::contacts_api::remove_contact(api_contact_id).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -779,7 +779,7 @@ fn wire__crate__api__messages__send_file_message_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::messages::send_file_message(
+                        let output_ok = crate::api::messages_api::send_file_message(
                             api_contact_id,
                             api_file_path,
                             api_file_name,
@@ -822,7 +822,7 @@ fn wire__crate__api__messages__send_text_message_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            crate::api::messages::send_text_message(api_contact_id, api_content)
+                            crate::api::messages_api::send_text_message(api_contact_id, api_content)
                                 .await?;
                         Ok(output_ok)
                     })()
@@ -857,7 +857,7 @@ fn wire__crate__api__network__set_network_config_impl(
             let api__port = <u16>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::set_network_config(api__max_peers, api__port)?;
+                let output_ok = crate::api::network_api::set_network_config(api__max_peers, api__port)?;
                 Ok(output_ok)
             })())
         },
@@ -886,7 +886,7 @@ fn wire__crate__api__core__shutdown_core_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::core::shutdown_core()?;
+                let output_ok = crate::api::core_api::shutdown_core()?;
                 Ok(output_ok)
             })())
         },
@@ -915,7 +915,7 @@ fn wire__crate__api__network__start_discovery_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::start_discovery()?;
+                let output_ok = crate::api::network_api::start_discovery()?;
                 Ok(output_ok)
             })())
         },
@@ -947,7 +947,7 @@ fn wire__crate__api__events__start_event_listener_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::events::start_event_listener().await?;
+                        let output_ok = crate::api::events_api::start_event_listener().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -982,7 +982,7 @@ fn wire__crate__api__core__start_server_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::core::start_server().await?;
+                        let output_ok = crate::api::core_api::start_server().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1014,7 +1014,7 @@ fn wire__crate__api__network__stop_discovery_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::network::stop_discovery()?;
+                let output_ok = crate::api::network_api::stop_discovery()?;
                 Ok(output_ok)
             })())
         },
@@ -1049,7 +1049,7 @@ fn wire__crate__api__contacts__update_contact_trust_level_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = crate::api::contacts::update_contact_trust_level(
+                        let output_ok = crate::api::contacts_api::update_contact_trust_level(
                             api_contact_id,
                             api_trust_level,
                         )
