@@ -231,7 +231,7 @@ pub async fn get_network_health() -> Result<NetworkHealth, String> {
                 message_success_rate: 0.0,
                 average_ping: 0,
                 network_errors: 1,
-                last_error: Some(e),
+                last_error: Some(e.to_string()),
             }),
         }
     } else {

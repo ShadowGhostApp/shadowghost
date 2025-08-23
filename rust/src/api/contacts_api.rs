@@ -1,5 +1,5 @@
 use super::core_api::CORE;
-use crate::data::contacts::ContactStats;
+use crate::contacts::ContactStats;
 use crate::network::manager::{Contact, ContactStatus, TrustLevel};
 use chrono::Utc;
 use flutter_rust_bridge::frb;
