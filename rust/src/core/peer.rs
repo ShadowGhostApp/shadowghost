@@ -25,7 +25,6 @@ impl Peer {
     pub fn new_with_entropy(name: String, address: String) -> Self {
         let (host, port) = Self::parse_address(&address);
 
-
         let entropy = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

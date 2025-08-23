@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::IpAddr;
-use std::time::Duration;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredPeer {
@@ -11,150 +13,439 @@ pub struct DiscoveredPeer {
     pub port: u16,
     pub name: String,
     pub last_seen: u64,
+    pub public_key: Vec<u8>,
+    pub protocol_version: u8,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnouncementMessage {
+    pub peer_id: String,
+    pub peer_name: String,
+    pub port: u16,
+    pub public_key: Vec<u8>,
+    pub protocol_version: u8,
+    pub capabilities: Vec<String>,
+    pub timestamp: u64,
 }
 
 pub struct NetworkDiscovery {
     local_port: u16,
-    discovered_peers: HashMap<String, DiscoveredPeer>,
-    is_running: bool,
+    local_peer_id: String,
+    local_peer_name: String,
+    discovered_peers: Arc<RwLock<HashMap<String, DiscoveredPeer>>>,
+    is_running: Arc<Mutex<bool>>,
+    announcement_socket: Option<Arc<UdpSocket>>,
+    listening_socket: Option<Arc<UdpSocket>>,
+    discovery_handle: Option<tokio::task::JoinHandle<()>>,
+    announcement_handle: Option<tokio::task::JoinHandle<()>>,
+    public_key: Vec<u8>,
 }
 
 impl NetworkDiscovery {
-    pub fn new(local_port: u16) -> Self {
+    pub fn new(local_port: u16, peer_id: String, peer_name: String, public_key: Vec<u8>) -> Self {
         Self {
             local_port,
-            discovered_peers: HashMap::new(),
-            is_running: false,
+            local_peer_id: peer_id,
+            local_peer_name: peer_name,
+            discovered_peers: Arc::new(RwLock::new(HashMap::new())),
+            is_running: Arc::new(Mutex::new(false)),
+            announcement_socket: None,
+            listening_socket: None,
+            discovery_handle: None,
+            announcement_handle: None,
+            public_key,
         }
     }
 
-    pub async fn start_discovery(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.is_running {
+    pub async fn start_discovery(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut is_running = self.is_running.lock().await;
+        if *is_running {
             return Ok(());
         }
 
-        self.is_running = true;
+        let listening_socket = UdpSocket::bind("0.0.0.0:9999").await?;
+        let announcement_socket = UdpSocket::bind("0.0.0.0:0").await?;
+        announcement_socket.set_broadcast(true)?;
+
+        self.listening_socket = Some(Arc::new(listening_socket));
+        self.announcement_socket = Some(Arc::new(announcement_socket));
+
+        let peers_clone = self.discovered_peers.clone();
+        let running_clone = self.is_running.clone();
+        let listening_socket_clone = self.listening_socket.as_ref().unwrap().clone();
+
+        let discovery_handle = tokio::spawn(async move {
+            Self::discovery_listener(peers_clone, running_clone, listening_socket_clone).await;
+        });
+
+        let announcement_socket_clone = self.announcement_socket.as_ref().unwrap().clone();
+        let running_clone = self.is_running.clone();
+        let peer_id = self.local_peer_id.clone();
+        let peer_name = self.local_peer_name.clone();
+        let port = self.local_port;
+        let public_key = self.public_key.clone();
+
+        let announcement_handle = tokio::spawn(async move {
+            Self::announcement_broadcaster(
+                announcement_socket_clone,
+                running_clone,
+                peer_id,
+                peer_name,
+                port,
+                public_key,
+            )
+            .await;
+        });
+
+        self.discovery_handle = Some(discovery_handle);
+        self.announcement_handle = Some(announcement_handle);
+
+        *is_running = true;
         Ok(())
     }
 
-    pub fn stop_discovery(&mut self) {
-        self.is_running = false;
-        self.discovered_peers.clear();
+    pub async fn stop_discovery(&mut self) {
+        let mut is_running = self.is_running.lock().await;
+        *is_running = false;
+
+        if let Some(handle) = self.discovery_handle.take() {
+            handle.abort();
+        }
+
+        if let Some(handle) = self.announcement_handle.take() {
+            handle.abort();
+        }
+
+        self.discovered_peers.write().await.clear();
+    }
+
+    async fn discovery_listener(
+        peers: Arc<RwLock<HashMap<String, DiscoveredPeer>>>,
+        is_running: Arc<Mutex<bool>>,
+        socket: Arc<UdpSocket>,
+    ) {
+        let mut buffer = [0u8; 2048];
+
+        while *is_running.lock().await {
+            match tokio::time::timeout(Duration::from_secs(1), socket.recv_from(&mut buffer)).await
+            {
+                Ok(Ok((len, addr))) => {
+                    if let Ok(message_str) = std::str::from_utf8(&buffer[..len]) {
+                        if let Ok(announcement) =
+                            serde_json::from_str::<AnnouncementMessage>(message_str)
+                        {
+                            Self::process_announcement(announcement, addr.ip(), peers.clone())
+                                .await;
+                        }
+                    }
+                }
+                Ok(Err(e)) => eprintln!("Discovery receive error: {}", e),
+                Err(_) => continue,
+            }
+        }
+    }
+
+    async fn announcement_broadcaster(
+        socket: Arc<UdpSocket>,
+        is_running: Arc<Mutex<bool>>,
+        peer_id: String,
+        peer_name: String,
+        port: u16,
+        public_key: Vec<u8>,
+    ) {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+
+        while *is_running.lock().await {
+            interval.tick().await;
+
+            let announcement = AnnouncementMessage {
+                peer_id: peer_id.clone(),
+                peer_name: peer_name.clone(),
+                port,
+                public_key: public_key.clone(),
+                protocol_version: 1,
+                capabilities: vec!["chat".to_string(), "file_transfer".to_string()],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+
+            if let Ok(message_json) = serde_json::to_string(&announcement) {
+                let broadcast_addresses = ["255.255.255.255:9999", "224.0.0.1:9999"];
+
+                for addr in &broadcast_addresses {
+                    let _ = socket.send_to(message_json.as_bytes(), addr).await;
+                }
+
+                for subnet in &[
+                    "192.168.1.255:9999",
+                    "10.0.0.255:9999",
+                    "172.16.255.255:9999",
+                ] {
+                    let _ = socket.send_to(message_json.as_bytes(), subnet).await;
+                }
+            }
+        }
+    }
+
+    async fn process_announcement(
+        announcement: AnnouncementMessage,
+        from_ip: IpAddr,
+        peers: Arc<RwLock<HashMap<String, DiscoveredPeer>>>,
+    ) {
+        let discovered_peer = DiscoveredPeer {
+            id: announcement.peer_id.clone(),
+            address: from_ip,
+            port: announcement.port,
+            name: announcement.peer_name,
+            last_seen: announcement.timestamp,
+            public_key: announcement.public_key,
+            protocol_version: announcement.protocol_version,
+            capabilities: announcement.capabilities,
+        };
+
+        let mut peers_map = peers.write().await;
+        peers_map.insert(announcement.peer_id, discovered_peer);
     }
 
     pub fn is_running(&self) -> bool {
-        self.is_running
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async { *self.is_running.lock().await })
+        })
     }
 
-    pub fn get_discovered_peers(&self) -> Vec<DiscoveredPeer> {
-        self.discovered_peers.values().cloned().collect()
+    pub async fn get_discovered_peers(&self) -> Vec<DiscoveredPeer> {
+        self.discovered_peers
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 
-    pub async fn announce_presence(
-        &self,
-        peer_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.is_running {
-            return Ok(());
+    pub async fn announce_presence(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(socket) = &self.announcement_socket {
+            let announcement = AnnouncementMessage {
+                peer_id: self.local_peer_id.clone(),
+                peer_name: self.local_peer_name.clone(),
+                port: self.local_port,
+                public_key: self.public_key.clone(),
+                protocol_version: 1,
+                capabilities: vec!["chat".to_string(), "file_transfer".to_string()],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+
+            let message_json = serde_json::to_string(&announcement)?;
+            socket
+                .send_to(message_json.as_bytes(), "255.255.255.255:9999")
+                .await?;
         }
-
-        let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        socket.set_broadcast(true)?;
-
-        let announcement = format!(
-            "SG_ANNOUNCE:{}:{}:{}",
-            uuid::Uuid::new_v4(),
-            peer_name,
-            self.local_port
-        );
-
-        let broadcast_addr = format!("255.255.255.255:9999");
-        socket
-            .send_to(announcement.as_bytes(), &broadcast_addr)
-            .await?;
-
         Ok(())
     }
 
-    pub async fn listen_for_announcements(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.is_running {
-            return Ok(());
-        }
-
-        let socket = UdpSocket::bind("0.0.0.0:9999").await?;
-        let mut buf = [0u8; 1024];
-
-        loop {
-            if !self.is_running {
-                break;
-            }
-
-            match tokio::time::timeout(Duration::from_secs(1), socket.recv_from(&mut buf)).await {
-                Ok(Ok((len, addr))) => {
-                    if let Ok(announcement) = std::str::from_utf8(&buf[..len]) {
-                        self.process_announcement(announcement, addr.ip()).await;
-                    }
-                }
-                _ => continue,
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn process_announcement(&mut self, announcement: &str, from_ip: IpAddr) {
-        let parts: Vec<&str> = announcement.split(':').collect();
-        if parts.len() >= 4 && parts[0] == "SG_ANNOUNCE" {
-            let peer_id = parts[1].to_string();
-            let peer_name = parts[2].to_string();
-            if let Ok(port) = parts[3].parse::<u16>() {
-                let peer = DiscoveredPeer {
-                    id: peer_id.clone(),
-                    address: from_ip,
-                    port,
-                    name: peer_name,
-                    last_seen: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                };
-
-                self.discovered_peers.insert(peer_id, peer);
-            }
-        }
-    }
-
-    pub fn cleanup_old_peers(&mut self, max_age_seconds: u64) {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+    pub async fn cleanup_old_peers(&self, max_age_seconds: u64) {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
+        let mut peers = self.discovered_peers.write().await;
 
-        self.discovered_peers
-            .retain(|_, peer| current_time - peer.last_seen < max_age_seconds);
+        peers.retain(|_, peer| current_time - peer.last_seen < max_age_seconds);
     }
 
-    pub async fn get_external_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
-        let response = reqwest::get("https://api.ipify.org").await?;
-        let ip_str = response.text().await?;
-        Ok(ip_str.parse()?)
+    pub async fn get_external_ip() -> Result<IpAddr, Box<dyn std::error::Error + Send + Sync>> {
+        let services = [
+            "https://api.ipify.org",
+            "https://ipinfo.io/ip",
+            "https://httpbin.org/ip",
+        ];
+
+        for service in &services {
+            match reqwest::get(*service).await {
+                Ok(response) => {
+                    if let Ok(text) = response.text().await {
+                        if service.contains("httpbin") {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if let Some(origin) = json.get("origin") {
+                                    if let Some(ip_str) = origin.as_str() {
+                                        let ip_parts: Vec<&str> = ip_str.split(',').collect();
+                                        if let Ok(ip) = ip_parts[0].trim().parse::<IpAddr>() {
+                                            return Ok(ip);
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            let cleaned_text = text.trim();
+                            if let Ok(ip) = cleaned_text.parse::<IpAddr>() {
+                                return Ok(ip);
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+
+        Err("Failed to determine external IP".into())
     }
 
     pub async fn test_connectivity() -> bool {
         Self::get_external_ip().await.is_ok()
     }
 
-    pub fn get_peer_count(&self) -> usize {
-        self.discovered_peers.len()
+    pub async fn get_peer_count(&self) -> usize {
+        self.discovered_peers.read().await.len()
     }
 
-    pub fn find_peer_by_name(&self, name: &str) -> Option<&DiscoveredPeer> {
-        self.discovered_peers
+    pub async fn find_peer_by_name(&self, name: &str) -> Option<DiscoveredPeer> {
+        let peers = self.discovered_peers.read().await;
+        peers.values().find(|peer| peer.name == name).cloned()
+    }
+
+    pub async fn find_peer_by_id(&self, id: &str) -> Option<DiscoveredPeer> {
+        let peers = self.discovered_peers.read().await;
+        peers.get(id).cloned()
+    }
+
+    pub async fn get_peers_by_capability(&self, capability: &str) -> Vec<DiscoveredPeer> {
+        let peers = self.discovered_peers.read().await;
+        peers
             .values()
-            .find(|peer| peer.name == name)
+            .filter(|peer| peer.capabilities.contains(&capability.to_string()))
+            .cloned()
+            .collect()
     }
 
-    pub fn find_peer_by_id(&self, id: &str) -> Option<&DiscoveredPeer> {
-        self.discovered_peers.get(id)
+    pub async fn scan_local_network(
+        &self,
+    ) -> Result<Vec<DiscoveredPeer>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut discovered = Vec::new();
+
+        let local_interfaces = self.get_local_network_ranges().await?;
+
+        for range in local_interfaces {
+            let scan_results = self.scan_ip_range(&range).await?;
+            discovered.extend(scan_results);
+        }
+
+        Ok(discovered)
     }
+
+    async fn get_local_network_ranges(
+        &self,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(vec![
+            "192.168.1.0/24".to_string(),
+            "192.168.0.0/24".to_string(),
+            "10.0.0.0/24".to_string(),
+            "172.16.0.0/24".to_string(),
+        ])
+    }
+
+    async fn scan_ip_range(
+        &self,
+        range: &str,
+    ) -> Result<Vec<DiscoveredPeer>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut discovered = Vec::new();
+
+        let base_ip = range.split('/').next().unwrap_or("192.168.1.0");
+        let ip_parts: Vec<&str> = base_ip.split('.').collect();
+
+        if ip_parts.len() != 4 {
+            return Ok(discovered);
+        }
+
+        let base = format!("{}.{}.{}", ip_parts[0], ip_parts[1], ip_parts[2]);
+
+        let mut tasks = Vec::new();
+
+        for i in 1..=254 {
+            let ip = format!("{}.{}", base, i);
+            let port = self.local_port;
+
+            let task = tokio::spawn(async move { Self::probe_peer(&ip, port).await });
+
+            tasks.push(task);
+        }
+
+        for task in tasks {
+            if let Ok(Some(peer)) = task.await {
+                discovered.push(peer);
+            }
+        }
+
+        Ok(discovered)
+    }
+
+    async fn probe_peer(ip: &str, port: u16) -> Option<DiscoveredPeer> {
+        let addr = format!("{}:{}", ip, port);
+
+        match tokio::time::timeout(
+            Duration::from_millis(100),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        {
+            Ok(Ok(_stream)) => Some(DiscoveredPeer {
+                id: uuid::Uuid::new_v4().to_string(),
+                address: ip.parse().ok()?,
+                port,
+                name: format!("Peer@{}", ip),
+                last_seen: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                public_key: vec![],
+                protocol_version: 1,
+                capabilities: vec!["unknown".to_string()],
+            }),
+            _ => None,
+        }
+    }
+
+    pub async fn get_discovery_statistics(&self) -> DiscoveryStatistics {
+        let peers = self.discovered_peers.read().await;
+        let total_peers = peers.len();
+        let active_peers = peers
+            .values()
+            .filter(|p| {
+                let current_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                current_time - p.last_seen < 300
+            })
+            .count();
+
+        let capabilities: std::collections::HashSet<String> = peers
+            .values()
+            .flat_map(|p| p.capabilities.iter())
+            .cloned()
+            .collect();
+
+        DiscoveryStatistics {
+            total_discovered: total_peers,
+            active_peers,
+            unique_capabilities: capabilities.len(),
+            discovery_uptime: 0,
+            last_discovery: chrono::Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveryStatistics {
+    pub total_discovered: usize,
+    pub active_peers: usize,
+    pub unique_capabilities: usize,
+    pub discovery_uptime: u64,
+    pub last_discovery: chrono::DateTime<chrono::Utc>,
 }

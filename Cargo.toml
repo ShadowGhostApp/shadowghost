@@ -8,6 +8,121 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+debug = false
+debug-assertions = false
+overflow-checks = false
+incremental = false
+
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+panic = "unwind"
+incremental = true
+codegen-units = 256
 
 [profile.test]
 opt-level = 1
+debug = true
+debug-assertions = true
+overflow-checks = true
+incremental = true
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+debug-assertions = false
+overflow-checks = false
+
+# Workspace-wide configuration
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ShadowGhost Team"]
+license = "MIT"
+repository = "https://github.com/shadowghost/shadowghost"
+description = "Secure P2P Messenger with Flutter UI"
+keywords = ["p2p", "messenger", "encryption", "flutter"]
+categories = ["network-programming", "cryptography"]
+
+# Common dependencies shared across workspace members
+[workspace.dependencies]
+# Async runtime - основа для асинхронности
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+
+# Serialization - сериализация данных
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Crypto - криптографические функции
+aes-gcm = "0.10"
+rsa = { version = "0.9", features = ["std", "pem"] }
+sha2 = "0.10"
+rand = "0.8"
+argon2 = "0.5"
+
+# Time - работа с датой и временем
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+# Flutter bridge
+flutter_rust_bridge = "2.0"
+
+# Base64 encoding
+base64 = "0.22"
+
+# Network
+reqwest = { version = "0.11", features = ["json"] }
+
+# Тестирование и разработка (перемещено из dev-dependencies)
+tokio-test = "0.4"
+tempfile = "3.21.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+
+# Development tools - оставляем пустой, так как все зависимости перемещены выше
+[workspace.dev-dependencies]
+
+# Optimization settings for dependencies
+[profile.release.package.flutter_rust_bridge]
+opt-level = "s"
+
+[profile.release.package.tokio]
+opt-level = 3
+
+[profile.release.package.serde]
+opt-level = 3
+
+[profile.release.package.serde_json]
+opt-level = 3
+
+# Platform-specific optimizations
+[profile.release.package."*"]
+opt-level = "z"
+
+# Build settings
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[workspace.metadata.release]
+consolidate-commits = true
+pre-release-replacements = [
+    { file = "README.md", search = "shadowghost = \"[a-z0-9\\.-]+\"", replace = "shadowghost = \"{{version}}\"" },
+]
