@@ -1,4 +1,4 @@
-use crate::core::peer::Peer;
+use crate::core::peer::PeerData;
 use crate::events::EventBus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

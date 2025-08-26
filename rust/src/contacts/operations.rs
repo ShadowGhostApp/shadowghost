@@ -1,4 +1,3 @@
-use crate::core::peer::Peer;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;

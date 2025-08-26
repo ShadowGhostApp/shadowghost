@@ -1,65 +1,133 @@
 [package]
 name = "shadowghost"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 name = "shadowghost"
-path = "src/lib.rs"
+crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
 name = "shadowghost"
 path = "src/bin/main.rs"
 
-[[bench]]
-name = "benchmarks"
-path = "bench/benchmarks.rs"
-harness = false
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
-
 [dependencies]
-# Bridging API for Frontend
-flutter_rust_bridge = { version = "2.11", features = ["chrono"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
 
-# Async runtime
-tokio = { version = "1.47.1", features = ["full", "time"] }
-tokio-util = "0.7.16"
+aes-gcm = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+rand = { workspace = true }
+argon2 = { workspace = true, optional = true }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.9.5"
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
 
-# Networking
-reqwest = { version = "0.12.23", features = ["json"] }
+flutter_rust_bridge = { optional = true, version = "=2.11.1" }
+base64 = { workspace = true }
+reqwest = { workspace = true, optional = true }
 
-# Cryptography
-ring = "0.17"
-curve25519-dalek = "4.0"
+notify = "8.2"
+colored = { version = "3.0", optional = true }
+clap = { version = "4.4", features = ["derive", "env"], optional = true }
+daemonize = { version = "0.5", optional = true }
+criterion = { workspace = true, optional = true }
+prometheus = { version = "0.14.0", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+], optional = true }
 
-# Encoding
-base64 = "0.22.1"
-uuid = { version = "1.0", features = ["v4"] }
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [
+    "processthreadsapi",
+    "psapi",
+    "sysinfoapi",
+    "handleapi",
+    "winuser",
+    "winsock2",
+] }
 
-# Logging
-log = "0.4.27"
-env_logger = "0.11.8"
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = "0.30.1"
 
-# Random
-rand = "0.9.2"
-
-# Time handling
-chrono = { version = "0.4", features = ["serde"] }
-
-# Async utilities
-futures = "0.3.31"
-
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10.1"
 
 [dev-dependencies]
-criterion = { version = "0.7.0", features = ["html_reports"] }
-tokio-test = "0.4"
-tempfile = "3.8"
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+serial_test = "3.0"
+rstest = "0.26.1"
+mockall = "0.13.1"
+wiremock = "0.6.5"
+
+[features]
+default = ["flutter_bridge", "networking", "crypto"]
+
+flutter_bridge = ["dep:flutter_rust_bridge"]
+networking = ["tokio/net", "dep:reqwest"]
+crypto = ["dep:aes-gcm", "dep:rsa", "dep:sha2", "dep:argon2"]
+
+cli = ["dep:clap", "dep:colored"]
+daemon = ["dep:daemonize"]
+
+metrics = ["dep:prometheus"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+
+test_mode = []
+mock_crypto = []
+debug_networking = []
+benchmark = ["dep:criterion"]
+
+[build-dependencies]
+flutter_rust_bridge_codegen = "2.11.1"
+
+[package.metadata.playground]
+features = ["default"]
+
+[[bench]]
+name = "benchmarks"
+harness = false
+required-features = ["benchmark", "networking"]
+path = "benches\benchmarks.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration_tests.rs"
+
+[[test]]
+name = "crypto_integration"
+path = "tests/crypto_tests.rs"
+required-features = ["crypto"]
+
+[[test]]
+name = "network_integration"
+path = "tests/network_tests.rs"
+required-features = ["networking"]
+
+[package.metadata.commands]
+test-all = "cargo test --all-features"
+bench-all = "cargo bench --all-features"
+check-all = "cargo check --all-features --all-targets"
+fmt-all = "cargo fmt --all"
+clippy-all = "cargo clippy --all-features --all-targets -- -D warnings"
+
+[package.metadata.audit]
+ignore = []
