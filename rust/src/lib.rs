@@ -1,9 +1,11 @@
+pub mod chats;
 pub mod contacts;
 pub mod core;
 pub mod crypto;
 pub mod events;
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 pub mod network;
+pub mod storage;
 pub mod utils;
 
 // Re-export Flutter API functions

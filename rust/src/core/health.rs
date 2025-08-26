@@ -1,4 +1,4 @@
-use crate::core::config::AppConfig;
+use crate::core::config::Config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -37,14 +37,14 @@ pub struct HealthIssue {
 }
 
 pub struct HealthMonitor {
-    config: AppConfig,
+    config: Config,
     last_status: HealthStatus,
     check_interval: Duration,
     is_running: bool,
 }
 
 impl HealthMonitor {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             last_status: HealthStatus::default(),
@@ -159,7 +159,7 @@ impl HealthMonitor {
             HealthLevel::Warning
         };
 
-        let message = if status == HealthLevel::Healthy {
+        let _message = if status == HealthLevel::Healthy {
             "Storage accessible".to_string()
         } else {
             "Storage path issues detected".to_string()
@@ -168,7 +168,7 @@ impl HealthMonitor {
         ComponentHealth {
             name: "Storage".to_string(),
             status,
-            message,
+            message: _message,
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -194,7 +194,7 @@ impl Default for HealthStatus {
 }
 
 impl HealthStatus {
-    pub fn healthy(message: String) -> Self {
+    pub fn healthy(_message: String) -> Self {
         Self {
             overall_health: HealthLevel::Healthy,
             components: HashMap::new(),
