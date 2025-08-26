@@ -1,4 +1,5 @@
-use super::{Config, EventBus, Profile, ProfileManager};
+use super::{Config, Profile, ProfileManager};
+use crate::events::EventBus;
 use crate::{chats, contacts, crypto, network, storage};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -9,10 +10,10 @@ pub struct Engine {
     profile: Profile,
     profile_path: PathBuf,
     chats_manager: chats::Manager,
-    contacts_manager: contacts::Manager,
-    network_manager: network::Manager,
-    crypto_manager: crypto::Manager,
-    storage_manager: storage::Manager,
+    contacts_manager: contacts::ContactManager,
+    network_manager: network::NetworkManager,
+    crypto_manager: crypto::SecurityManager,
+    storage_manager: storage::StorageManager,
     config: Config,
     event_bus: EventBus,
 }
@@ -35,20 +36,20 @@ impl Engine {
         let event_bus = EventBus::new();
 
         // Create managers in correct dependency order
-        let storage_manager = storage::Manager::new(&profile_path, event_bus.clone())
+        let storage_manager = storage::StorageManager::new(&profile_path, event_bus.clone())
+            .map_err(|e| EngineError::Manager(e.to_string()))?;
+
+        let crypto_manager = crypto::SecurityManager::new(config.clone(), event_bus.clone())
             .map_err(|e| EngineError::Manager(e))?;
-        let crypto_manager =
-            crypto::Manager::new(&profile_path).map_err(|e| EngineError::Manager(e))?;
-        let network_manager = network::Manager::new(&config, event_bus.clone())
+
+        let network_manager = network::NetworkManager::new_default()
+            .map_err(|e| EngineError::Manager(e.to_string()))?;
+
+        let contacts_manager = contacts::ContactManager::new(&profile_path)
+            .map_err(|e| EngineError::Manager(e.to_string()))?;
+
+        let chats_manager = chats::Manager::new(storage_manager.clone(), event_bus.clone())
             .map_err(|e| EngineError::Manager(e))?;
-        let contacts_manager = contacts::Manager::new(storage_manager.clone(), event_bus.clone())
-            .map_err(|e| EngineError::Manager(e))?;
-        let chats_manager = chats::Manager::new(
-            storage_manager.clone(),
-            network_manager.clone(),
-            event_bus.clone(),
-        )
-        .map_err(|e| EngineError::Manager(e))?;
 
         Ok(Self {
             profile,
@@ -74,14 +75,15 @@ impl Engine {
             .initialize()
             .await
             .map_err(|e| EngineError::Initialization(e))?;
+
         self.crypto_manager
             .initialize()
             .await
             .map_err(|e| EngineError::Initialization(e))?;
+
         self.network_manager
             .start()
-            .await
-            .map_err(|e| EngineError::Initialization(e))?;
+            .map_err(|e| EngineError::Initialization(e.to_string()))?;
 
         Ok(())
     }
@@ -89,8 +91,7 @@ impl Engine {
     pub async fn shutdown(&mut self) -> Result<(), EngineError> {
         self.network_manager
             .stop()
-            .await
-            .map_err(|e| EngineError::Manager(e))?;
+            .map_err(|e| EngineError::Manager(e.to_string()))?;
         Ok(())
     }
 
@@ -98,19 +99,27 @@ impl Engine {
         &self.chats_manager
     }
 
-    pub fn contacts(&self) -> &contacts::Manager {
-        &self.contacts_manager
+    pub fn get_current_timestamp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
-    pub fn network(&self) -> &network::Manager {
-        &self.network_manager
-    }
-
-    pub fn crypto(&self) -> &crypto::Manager {
-        &self.crypto_manager
-    }
-
-    pub fn storage(&self) -> &storage::Manager {
-        &self.storage_manager
+    pub fn format_chat_message(
+        from: &str,
+        to: &str,
+        content: &str,
+        msg_type: crate::network::ChatMessageType,
+    ) -> ChatMessage {
+        ChatMessage {
+            id: Self::create_message_id(),
+            from: from.to_string(),
+            to: to.to_string(),
+            content: content.to_string(),
+            msg_type,
+            timestamp: Self::get_current_timestamp(),
+            delivery_status: crate::network::DeliveryStatus::Pending,
+        }
     }
 }
