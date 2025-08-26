@@ -99,19 +99,27 @@ impl Engine {
         &self.chats_manager
     }
 
-    pub fn contacts(&self) -> &contacts::ContactManager {
-        &self.contacts_manager
+    pub fn get_current_timestamp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
-    pub fn network(&self) -> &network::NetworkManager {
-        &self.network_manager
-    }
-
-    pub fn crypto(&self) -> &crypto::SecurityManager {
-        &self.crypto_manager
-    }
-
-    pub fn storage(&self) -> &storage::StorageManager {
-        &self.storage_manager
+    pub fn format_chat_message(
+        from: &str,
+        to: &str,
+        content: &str,
+        msg_type: crate::network::ChatMessageType,
+    ) -> ChatMessage {
+        ChatMessage {
+            id: Self::create_message_id(),
+            from: from.to_string(),
+            to: to.to_string(),
+            content: content.to_string(),
+            msg_type,
+            timestamp: Self::get_current_timestamp(),
+            delivery_status: crate::network::DeliveryStatus::Pending,
+        }
     }
 }
