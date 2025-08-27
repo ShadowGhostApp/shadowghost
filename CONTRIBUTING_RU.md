@@ -61,7 +61,7 @@ export PATH="$PATH:`pwd`/flutter/bin"
 ### Установка зависимостей
 
 #### Rust (при необходимости)
-```bash
+с```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 ```

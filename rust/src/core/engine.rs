@@ -1,4 +1,5 @@
-use super::{Config, Profile, ProfileManager};
+use crate::core::types::*;
+use crate::core::manager::*;
 use crate::events::EventBus;
 use crate::{chats, contacts, crypto, network, storage};
 use std::path::PathBuf;
@@ -18,38 +19,29 @@ pub struct Engine {
     event_bus: EventBus,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum EngineError {
-    #[error("Initialization error: {0}")]
-    Initialization(String),
-    #[error("Profile error: {0}")]
-    Profile(String),
-    #[error("Configuration error: {0}")]
-    Config(String),
-    #[error("Manager error: {0}")]
-    Manager(String),
-}
-
 impl Engine {
-    pub fn new(profile: Profile, profile_path: PathBuf) -> Result<Self, EngineError> {
-        let config = Config::load(&profile_path).map_err(|e| EngineError::Config(e))?;
+    pub fn new(profile: Profile, profile_path: PathBuf) -> Result<Self, CoreError> {
+        let config = Config::load(&profile_path).map_err(|e| CoreError::Config(e))?;
         let event_bus = EventBus::new();
 
         // Create managers in correct dependency order
         let storage_manager = storage::StorageManager::new(&profile_path, event_bus.clone())
-            .map_err(|e| EngineError::Manager(e.to_string()))?;
+            .map_err(|e| CoreError::Manager(e.to_string()))?;
 
         let crypto_manager = crypto::SecurityManager::new(config.clone(), event_bus.clone())
-            .map_err(|e| EngineError::Manager(e))?;
+            .map_err(|e| CoreError::Manager(e))?;
 
         let network_manager = network::NetworkManager::new_default()
-            .map_err(|e| EngineError::Manager(e.to_string()))?;
+            .map_err(|e| CoreError::Manager(e.to_string()))?;
 
         let contacts_manager = contacts::ContactManager::new(&profile_path)
-            .map_err(|e| EngineError::Manager(e.to_string()))?;
+            .map_err(|e| CoreError::Manager(e.to_string()))?;
 
-        let chats_manager = chats::Manager::new(storage_manager.clone(), event_bus.clone())
-            .map_err(|e| EngineError::Manager(e))?;
+        let chats_manager = chats::Manager::new(
+            std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager.clone())), 
+            event_bus.clone()
+        )
+        .map_err(|e| CoreError::Manager(e))?;
 
         Ok(Self {
             profile,
@@ -64,39 +56,55 @@ impl Engine {
         })
     }
 
-    pub async fn initialize(&mut self, user_name: &str) -> Result<(), EngineError> {
+    pub async fn initialize(&mut self, user_name: &str) -> Result<(), CoreError> {
         self.config.user_name = user_name.to_string();
         self.config
             .save(&self.profile_path)
-            .map_err(|e| EngineError::Config(e))?;
+            .map_err(|e| CoreError::Config(e))?;
 
         // Initialize all managers
         self.storage_manager
             .initialize()
             .await
-            .map_err(|e| EngineError::Initialization(e))?;
+            .map_err(|e| CoreError::Initialization(e))?;
 
         self.crypto_manager
             .initialize()
             .await
-            .map_err(|e| EngineError::Initialization(e))?;
+            .map_err(|e| CoreError::Initialization(e))?;
 
         self.network_manager
             .start()
-            .map_err(|e| EngineError::Initialization(e.to_string()))?;
+            .map_err(|e| CoreError::Initialization(e.to_string()))?;
 
         Ok(())
     }
 
-    pub async fn shutdown(&mut self) -> Result<(), EngineError> {
+    pub async fn shutdown(&mut self) -> Result<(), CoreError> {
         self.network_manager
             .stop()
-            .map_err(|e| EngineError::Manager(e.to_string()))?;
+            .map_err(|e| CoreError::Manager(e.to_string()))?;
         Ok(())
     }
 
     pub fn chats(&self) -> &chats::Manager {
         &self.chats_manager
+    }
+
+    pub fn contacts(&self) -> &contacts::ContactManager {
+        &self.contacts_manager
+    }
+
+    pub fn network(&self) -> &network::NetworkManager {
+        &self.network_manager
+    }
+
+    pub fn storage(&self) -> &storage::StorageManager {
+        &self.storage_manager
+    }
+
+    pub fn crypto(&self) -> &crypto::SecurityManager {
+        &self.crypto_manager
     }
 
     pub fn get_current_timestamp() -> u64 {
@@ -106,13 +114,17 @@ impl Engine {
             .as_secs()
     }
 
+    pub fn create_message_id() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
     pub fn format_chat_message(
         from: &str,
         to: &str,
         content: &str,
         msg_type: crate::network::ChatMessageType,
-    ) -> ChatMessage {
-        ChatMessage {
+    ) -> crate::network::ChatMessage {
+        crate::network::ChatMessage {
             id: Self::create_message_id(),
             from: from.to_string(),
             to: to.to_string(),

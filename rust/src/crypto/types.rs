@@ -1,7 +1,57 @@
 use serde::{Deserialize, Serialize};
 
-// Re-export from crypto module for convenience
-pub use crate::crypto::{CryptoError, EncryptedMessage, KeyPair, PrivateKey, PublicKey};
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PublicKey {
+    pub key_data: Vec<u8>,
+    pub algorithm: String,
+}
+
+impl PublicKey {
+    pub fn new(key_data: Vec<u8>) -> Self {
+        Self {
+            key_data,
+            algorithm: "Ed25519".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivateKey {
+    pub key_data: Vec<u8>,
+    pub algorithm: String,
+}
+
+impl PrivateKey {
+    pub fn new(key_data: Vec<u8>) -> Self {
+        Self {
+            key_data,
+            algorithm: "Ed25519".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedMessage {
+    pub data: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub algorithm: String,
+}
+
+impl EncryptedMessage {
+    pub fn new(data: Vec<u8>, nonce: Vec<u8>) -> Self {
+        Self {
+            data,
+            nonce,
+            algorithm: "ChaCha20Poly1305".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyPair {
+    pub public_key: PublicKey,
+    pub private_key: PrivateKey,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityLevel {
