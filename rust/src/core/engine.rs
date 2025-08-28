@@ -15,6 +15,10 @@ pub struct Engine {
     network_manager: network::NetworkManager,
     crypto_manager: crypto::SecurityManager,
     storage_manager: storage::StorageManager,
+    contacts_manager: contacts::ContactManager,
+    network_manager: network::NetworkManager,
+    crypto_manager: crypto::SecurityManager,
+    storage_manager: storage::StorageManager,
     config: Config,
     event_bus: EventBus,
 }

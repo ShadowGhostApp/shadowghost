@@ -2,7 +2,6 @@ use crate::network::{Contact, ContactStatus, TrustLevel};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-// Re-export from network module
 pub use crate::network::{Contact, ContactStatus, TrustLevel};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
