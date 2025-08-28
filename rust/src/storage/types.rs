@@ -114,7 +114,6 @@ pub struct StorageHealth {
     pub last_check: chrono::DateTime<chrono::Utc>,
     pub recommendations: Vec<String>,
 }
-
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {

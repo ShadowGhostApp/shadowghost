@@ -94,13 +94,11 @@ impl StorageManager {
 
         self.save_chats_to_disk(&chat_storage).await?;
         self.update_stats().await?;
-
         self.event_bus
             .emit(AppEvent::Storage(StorageEvent::ChatHistorySaved {
                 chat_id: "various".to_string(),
                 message_count: 1,
             }));
-
         Ok(())
     }
 
@@ -268,7 +266,7 @@ impl StorageManager {
 
         Ok(removed_count)
     }
-
+  
     pub async fn save_contact(&self, contact: &Contact) -> Result<(), StorageError> {
         let mut contacts = self.contacts.write().await;
         contacts.insert(contact.id.clone(), contact.clone());
@@ -411,7 +409,6 @@ impl StorageManager {
 
         Ok(issues)
     }
-
     pub async fn export_chat_data(
         &self,
         chat_id: &str,
@@ -580,8 +577,6 @@ impl StorageManager {
 
         recommendations
     }
-
-    // Private helper methods
     async fn load_chats(&self) -> Result<(), StorageError> {
         let chat_file = self.data_path.join("chats.json");
 
@@ -599,7 +594,6 @@ impl StorageManager {
 
         Ok(())
     }
-
     async fn save_chats_to_disk(&self, chat_storage: &ChatStorage) -> Result<(), StorageError> {
         let chat_file = self.data_path.join("chats.json");
 
