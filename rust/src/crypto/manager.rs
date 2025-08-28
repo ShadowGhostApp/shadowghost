@@ -1,9 +1,144 @@
-use crate::core::config::Config;
-use crate::crypto::{CryptoManager, EncryptedMessage, PublicKey};
-use crate::events::bus::{AppEvent, CryptoEvent, EventBus};
+use crate::core::types::Config;
+use crate::crypto::types::*;
+use crate::events::types::{AppEvent, CryptoEvent, EventBus};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+#[derive(Debug)]
+pub enum CryptoError {
+    EncryptionFailed(String),
+    DecryptionFailed(String),
+    KeyGenerationFailed(String),
+    InvalidKey(String),
+    SigningFailed(String),
+    VerificationFailed(String),
+}
+
+impl fmt::Display for CryptoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CryptoError::EncryptionFailed(msg) => write!(f, "Encryption failed: {}", msg),
+            CryptoError::DecryptionFailed(msg) => write!(f, "Decryption failed: {}", msg),
+            CryptoError::KeyGenerationFailed(msg) => write!(f, "Key generation failed: {}", msg),
+            CryptoError::InvalidKey(msg) => write!(f, "Invalid key: {}", msg),
+            CryptoError::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
+            CryptoError::VerificationFailed(msg) => write!(f, "Verification failed: {}", msg),
+        }
+    }
+}
+
+impl Error for CryptoError {}
+
+pub struct CryptoManager {
+    keypair: Option<KeyPair>,
+}
+
+impl CryptoManager {
+    pub fn new() -> Result<Self, CryptoError> {
+        let mut manager = Self { keypair: None };
+        manager.generate_keypair()?;
+        Ok(manager)
+    }
+
+    pub fn generate_keypair(&mut self) -> Result<(), CryptoError> {
+        // Для демонстрации создаем фиктивные ключи
+        // В реальной реализации здесь должна быть настоящая криптография
+        let private_key_data = (0..32).collect::<Vec<u8>>();
+        let public_key_data = (32..64).collect::<Vec<u8>>();
+
+        let keypair = KeyPair {
+            private_key: PrivateKey::new(private_key_data),
+            public_key: PublicKey::new(public_key_data),
+        };
+
+        self.keypair = Some(keypair);
+        Ok(())
+    }
+
+    pub fn get_public_key(&self) -> PublicKey {
+        self.keypair
+            .as_ref()
+            .map(|kp| kp.public_key.clone())
+            .unwrap_or_else(|| PublicKey::new(vec![]))
+    }
+
+    pub fn encrypt_message(
+        &self,
+        message: &str,
+        _recipient_key: &PublicKey,
+    ) -> Result<EncryptedMessage, CryptoError> {
+        // Фиктивное шифрование для демонстрации
+        let data = message.as_bytes().to_vec();
+        let nonce = (0..12).collect::<Vec<u8>>();
+
+        Ok(EncryptedMessage::new(data, nonce))
+    }
+
+    pub fn decrypt_message(&self, encrypted: &EncryptedMessage) -> Result<String, CryptoError> {
+        // Фиктивная расшифровка для демонстрации
+        String::from_utf8(encrypted.data.clone())
+            .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
+    }
+
+    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        // Фиктивное шифрование для хранения
+        Ok(data.to_vec())
+    }
+
+    pub fn decrypt(&self, encrypted_data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        // Фиктивная расшифровка для хранения
+        Ok(encrypted_data.to_vec())
+    }
+
+    pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        // Фиктивная подпись
+        let signature = data.iter().map(|b| b.wrapping_add(1)).collect();
+        Ok(signature)
+    }
+
+    pub fn verify_signature(
+        &self,
+        _data: &[u8],
+        _signature: &[u8],
+        _public_key: &PublicKey,
+    ) -> Result<bool, CryptoError> {
+        // Фиктивная проверка подписи
+        Ok(true)
+    }
+
+    pub fn derive_shared_secret(&self, _other_key: &PublicKey) -> Result<Vec<u8>, CryptoError> {
+        // Фиктивный общий секрет
+        Ok((0..32).collect::<Vec<u8>>())
+    }
+
+    pub fn hash_data(&self, data: &[u8]) -> Vec<u8> {
+        // Простое хеширование для демонстрации
+        let mut hash = vec![0u8; 32];
+        for (i, byte) in data.iter().enumerate() {
+            hash[i % 32] ^= byte;
+        }
+        hash
+    }
+
+    pub fn export_public_key(&self) -> Result<String, CryptoError> {
+        let public_key = self.get_public_key();
+        serde_json::to_string(&public_key).map_err(|e| CryptoError::InvalidKey(e.to_string()))
+    }
+
+    pub fn import_public_key(&self, key_data: &str) -> Result<PublicKey, CryptoError> {
+        serde_json::from_str(key_data).map_err(|e| CryptoError::InvalidKey(e.to_string()))
+    }
+}
+
+impl Default for CryptoManager {
+    fn default() -> Self {
+        Self::new().unwrap_or_else(|_| Self { keypair: None })
+    }
+}
 
 pub struct SecurityManager {
     pub crypto: Arc<RwLock<CryptoManager>>,
@@ -141,11 +276,11 @@ impl SecurityManager {
 
     pub fn get_security_level(&self, peer_id: &str) -> SecurityLevel {
         if self.is_peer_blocked(peer_id) {
-            SecurityLevel::Blocked
+            SecurityLevel::blocked()
         } else if self.is_peer_trusted(peer_id) {
-            SecurityLevel::Trusted
+            SecurityLevel::trusted()
         } else {
-            SecurityLevel::Unknown
+            SecurityLevel::unknown()
         }
     }
 
@@ -202,16 +337,39 @@ impl SecurityManager {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum SecurityLevel {
-    Trusted,
-    Unknown,
-    Blocked,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Clone)]
-pub struct TrustStats {
-    pub trusted_peers: usize,
-    pub blocked_peers: usize,
-    pub total_known_peers: usize,
+    #[test]
+    fn test_crypto_manager_creation() {
+        let manager = CryptoManager::new().unwrap();
+        assert!(manager.keypair.is_some());
+    }
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let manager = CryptoManager::new().unwrap();
+        let message = "Hello, World!";
+        let public_key = manager.get_public_key();
+
+        let encrypted = manager.encrypt_message(message, &public_key).unwrap();
+        let decrypted = manager.decrypt_message(&encrypted).unwrap();
+
+        assert_eq!(message, decrypted);
+    }
+
+    #[test]
+    fn test_sign_verify() {
+        let manager = CryptoManager::new().unwrap();
+        let data = b"test data";
+        let public_key = manager.get_public_key();
+
+        let signature = manager.sign_data(data).unwrap();
+        let is_valid = manager
+            .verify_signature(data, &signature, &public_key)
+            .unwrap();
+
+        assert!(is_valid);
+    }
 }

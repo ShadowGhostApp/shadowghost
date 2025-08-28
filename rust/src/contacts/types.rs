@@ -1,17 +1,34 @@
 use crate::network::{Contact, ContactStatus, TrustLevel};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt;
 
+// Re-export network types
 pub use crate::network::{Contact, ContactStatus, TrustLevel};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContactStats {
-    pub total_contacts: usize,
-    pub online_contacts: usize,
-    pub trusted_contacts: usize,
-    pub blocked_contacts: usize,
-    pub pending_contacts: usize,
+#[derive(Debug)]
+pub enum ContactError {
+    InvalidContact(String),
+    ContactNotFound(String),
+    ContactExists(String),
+    SerializationError(String),
+    IoError(String),
 }
+
+impl fmt::Display for ContactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContactError::InvalidContact(msg) => write!(f, "Invalid contact: {}", msg),
+            ContactError::ContactNotFound(msg) => write!(f, "Contact not found: {}", msg),
+            ContactError::ContactExists(msg) => write!(f, "Contact exists: {}", msg),
+            ContactError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            ContactError::IoError(msg) => write!(f, "IO error: {}", msg),
+        }
+    }
+}
+
+impl Error for ContactError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactInteractionStats {
@@ -142,4 +159,13 @@ impl ContactGroup {
     pub fn contains_contact(&self, contact_id: &str) -> bool {
         self.contact_ids.contains(&contact_id.to_string())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactStats {
+    pub total_contacts: usize,
+    pub online_contacts: usize,
+    pub trusted_contacts: usize,
+    pub blocked_contacts: usize,
+    pub pending_contacts: usize,
 }

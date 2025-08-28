@@ -1,9 +1,6 @@
-use crate::events::{AppEvent, EventBus, StorageEvent};
+use crate::events::types::{AppEvent, EventBus, StorageEvent};
 use crate::network::{ChatMessage, Contact, DeliveryStatus};
-use crate::storage::{
-    BackupInfo, BackupStatus, BackupType, ChatMetadata, ChatStorage, StorageConfig, StorageError,
-    StorageHealth, StorageOptimizationResult, StorageStats,
-};
+use crate::storage::types::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -80,7 +77,7 @@ impl StorageManager {
         let mut chat_storage = self.chat_storage.write().await;
         let mut message_found = false;
 
-        for (chat_id, messages) in chat_storage.messages.iter_mut() {
+        for (_, messages) in chat_storage.messages.iter_mut() {
             if let Some(pos) = messages.iter().position(|m| m.id == message_id) {
                 messages.remove(pos);
                 message_found = true;
@@ -97,7 +94,11 @@ impl StorageManager {
 
         self.save_chats_to_disk(&chat_storage).await?;
         self.update_stats().await?;
-
+        self.event_bus
+            .emit(AppEvent::Storage(StorageEvent::ChatHistorySaved {
+                chat_id: "various".to_string(),
+                message_count: 1,
+            }));
         Ok(())
     }
 
@@ -139,6 +140,133 @@ impl StorageManager {
         Ok(())
     }
 
+    pub async fn get_messages_by_status(
+        &self,
+        chat_id: &str,
+        status: DeliveryStatus,
+    ) -> Result<Vec<ChatMessage>, StorageError> {
+        let chat_storage = self.chat_storage.read().await;
+        if let Some(messages) = chat_storage.messages.get(chat_id) {
+            let filtered_messages: Vec<ChatMessage> = messages
+                .iter()
+                .filter(|m| m.delivery_status == status)
+                .cloned()
+                .collect();
+            Ok(filtered_messages)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub async fn get_failed_messages(&self) -> Result<Vec<ChatMessage>, StorageError> {
+        let mut failed_messages = Vec::new();
+        let chat_storage = self.chat_storage.read().await;
+
+        for (_, messages) in &chat_storage.messages {
+            for message in messages {
+                if matches!(message.delivery_status, DeliveryStatus::Failed) {
+                    failed_messages.push(message.clone());
+                }
+            }
+        }
+
+        Ok(failed_messages)
+    }
+
+    pub async fn cleanup_old_messages(&self, days: u32) -> Result<u32, StorageError> {
+        let cutoff_time = chrono::Utc::now().timestamp() as u64 - (days as u64 * 24 * 60 * 60);
+        let mut removed_count = 0;
+        let mut chat_storage = self.chat_storage.write().await;
+
+        for (_, messages) in chat_storage.messages.iter_mut() {
+            let original_len = messages.len();
+            messages.retain(|m| m.timestamp >= cutoff_time);
+            removed_count += (original_len - messages.len()) as u32;
+        }
+
+        if removed_count > 0 {
+            self.save_chats_to_disk(&chat_storage).await?;
+            drop(chat_storage);
+            self.update_stats().await?;
+
+            self.event_bus
+                .emit(AppEvent::Storage(StorageEvent::CleanupCompleted {
+                    removed_items: removed_count as usize,
+                }));
+        }
+
+        Ok(removed_count)
+    }
+
+    pub async fn get_chat_size(&self, chat_id: &str) -> Result<u64, StorageError> {
+        let chat_storage = self.chat_storage.read().await;
+        if let Some(messages) = chat_storage.messages.get(chat_id) {
+            let size = serde_json::to_string(messages)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?
+                .len() as u64;
+            Ok(size)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn optimize_storage(&self) -> Result<StorageOptimizationResult, StorageError> {
+        let stats = self.stats.read().await;
+        let original_size = stats.total_size_bytes;
+        drop(stats);
+
+        self.compact_messages().await?;
+        self.remove_duplicate_messages().await?;
+        self.update_stats().await?;
+
+        let stats = self.stats.read().await;
+        let new_size = stats.total_size_bytes;
+        let space_saved = original_size.saturating_sub(new_size);
+
+        Ok(StorageOptimizationResult {
+            original_size_bytes: original_size,
+            optimized_size_bytes: new_size,
+            space_saved_bytes: space_saved,
+            messages_deduplicated: 0,
+            optimization_time: chrono::Utc::now(),
+        })
+    }
+
+    async fn compact_messages(&self) -> Result<(), StorageError> {
+        let mut chat_storage = self.chat_storage.write().await;
+        for (_, messages) in chat_storage.messages.iter_mut() {
+            messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        }
+        Ok(())
+    }
+
+    async fn remove_duplicate_messages(&self) -> Result<u32, StorageError> {
+        let mut removed_count = 0;
+        let mut chat_storage = self.chat_storage.write().await;
+
+        for (_, messages) in chat_storage.messages.iter_mut() {
+            let mut seen_ids = std::collections::HashSet::new();
+            let original_len = messages.len();
+
+            messages.retain(|message| {
+                if seen_ids.contains(&message.id) {
+                    false
+                } else {
+                    seen_ids.insert(message.id.clone());
+                    true
+                }
+            });
+
+            removed_count += (original_len - messages.len()) as u32;
+        }
+
+        if removed_count > 0 {
+            self.save_chats_to_disk(&chat_storage).await?;
+        }
+
+        Ok(removed_count)
+    }
+  
     pub async fn save_contact(&self, contact: &Contact) -> Result<(), StorageError> {
         let mut contacts = self.contacts.write().await;
         contacts.insert(contact.id.clone(), contact.clone());
@@ -261,6 +389,26 @@ impl StorageManager {
         Ok(issues)
     }
 
+    pub async fn validate_contacts(&self) -> Result<Vec<String>, StorageError> {
+        let mut issues = Vec::new();
+        let contacts = self.contacts.read().await;
+
+        for (contact_id, contact) in contacts.iter() {
+            if contact.id != *contact_id {
+                issues.push(format!("Contact ID mismatch: {} vs {}", contact.id, contact_id));
+            }
+
+            if contact.name.trim().is_empty() {
+                issues.push(format!("Contact {} has empty name", contact_id));
+            }
+
+            if contact.address.trim().is_empty() {
+                issues.push(format!("Contact {} has empty address", contact_id));
+            }
+        }
+
+        Ok(issues)
+    }
     pub async fn export_chat_data(
         &self,
         chat_id: &str,
@@ -300,14 +448,135 @@ impl StorageManager {
                 }
                 Ok(text_data)
             }
+            "html" => {
+                let mut html_data = String::from("<html><body><h1>Chat Export</h1><div>");
+                for message in messages {
+                    let time = chrono::DateTime::from_timestamp(message.timestamp as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| "Unknown time".to_string());
+
+                    html_data.push_str(&format!(
+                        "<p><strong>[{}] {}:</strong> {}</p>",
+                        time, message.from, message.content
+                    ));
+                }
+                html_data.push_str("</div></body></html>");
+                Ok(html_data)
+            }
             _ => Err(StorageError::SerializationError(
                 "Unsupported format".to_string(),
             )),
         }
     }
 
-    // Private helper methods
+    pub async fn import_chat_data(
+        &self,
+        chat_id: &str,
+        data: &str,
+        format: &str,
+    ) -> Result<u32, StorageError> {
+        let imported_messages: Vec<ChatMessage> = match format.to_lowercase().as_str() {
+            "json" => serde_json::from_str(data)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?,
+            _ => {
+                return Err(StorageError::SerializationError(
+                    "Unsupported import format".to_string(),
+                ))
+            }
+        };
 
+        let import_count = imported_messages.len() as u32;
+
+        for message in imported_messages {
+            self.save_message(chat_id, &message).await?;
+        }
+
+        Ok(import_count)
+    }
+
+    pub async fn get_storage_health(&self) -> Result<StorageHealth, StorageError> {
+        let issues = self.validate_all_data().await?;
+        let stats = self.stats.read().await;
+        let total_size = stats.total_size_bytes;
+        drop(stats);
+        let fragmentation = self.calculate_fragmentation().await?;
+
+        Ok(StorageHealth {
+            is_healthy: issues.is_empty(),
+            total_size_bytes: total_size,
+            fragmentation_percent: fragmentation,
+            corruption_issues: issues.len() as u32,
+            last_check: chrono::Utc::now(),
+            recommendations: self.get_health_recommendations(fragmentation, &issues),
+        })
+    }
+
+    async fn validate_all_data(&self) -> Result<Vec<String>, StorageError> {
+        let mut issues = Vec::new();
+
+        issues.extend(self.validate_contacts().await?);
+        issues.extend(self.validate_chats().await?);
+
+        Ok(issues)
+    }
+
+    async fn calculate_fragmentation(&self) -> Result<f64, StorageError> {
+        let mut total_messages = 0;
+        let mut fragmented_chats = 0;
+        let chat_storage = self.chat_storage.read().await;
+
+        for (_, messages) in &chat_storage.messages {
+            total_messages += messages.len();
+
+            let mut timestamps: Vec<u64> = messages.iter().map(|m| m.timestamp).collect();
+            timestamps.sort();
+
+            let mut gaps = 0;
+            for window in timestamps.windows(2) {
+                if window[1] - window[0] > 3600 {
+                    gaps += 1;
+                }
+            }
+
+            if gaps > messages.len() / 10 {
+                fragmented_chats += 1;
+            }
+        }
+
+        if chat_storage.messages.len() > 0 {
+            Ok((fragmented_chats as f64 / chat_storage.messages.len() as f64) * 100.0)
+        } else {
+            Ok(0.0)
+        }
+    }
+
+    fn get_health_recommendations(&self, fragmentation: f64, issues: &[String]) -> Vec<String> {
+        let mut recommendations = Vec::new();
+
+        if fragmentation > 30.0 {
+            recommendations
+                .push("Consider running storage optimization to reduce fragmentation".to_string());
+        }
+
+        if !issues.is_empty() {
+            recommendations.push("Fix data corruption issues found during validation".to_string());
+        }
+
+        let stats = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.stats.read())
+        });
+
+        if stats.total_size_bytes > 100 * 1024 * 1024 {
+            recommendations
+                .push("Consider archiving old messages to reduce storage size".to_string());
+        }
+
+        if recommendations.is_empty() {
+            recommendations.push("Storage is healthy, no actions needed".to_string());
+        }
+
+        recommendations
+    }
     async fn load_chats(&self) -> Result<(), StorageError> {
         let chat_file = self.data_path.join("chats.json");
 
@@ -325,12 +594,6 @@ impl StorageManager {
 
         Ok(())
     }
-
-    async fn save_chats(&self) -> Result<(), StorageError> {
-        let chat_storage = self.chat_storage.read().await;
-        self.save_chats_to_disk(&chat_storage).await
-    }
-
     async fn save_chats_to_disk(&self, chat_storage: &ChatStorage) -> Result<(), StorageError> {
         let chat_file = self.data_path.join("chats.json");
 

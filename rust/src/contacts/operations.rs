@@ -1,8 +1,9 @@
+use crate::core::Peer;
 use crate::network::{Contact, ContactStatus, PeerData, TrustLevel};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 
-use super::error::ContactError;
+use super::types::ContactError;
 
 pub fn generate_sg_link(peer: &Peer) -> Result<String, ContactError> {
     let peer_data = PeerData {
