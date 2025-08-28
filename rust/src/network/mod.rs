@@ -1,4 +1,5 @@
-﻿pub mod discovery;
+pub mod discovery;
+pub mod flutter_api;
 pub mod manager;
 pub mod protocol;
 pub mod tls_masking;

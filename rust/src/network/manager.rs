@@ -1,7 +1,7 @@
-use crate::core::peer::PeerData;
+use crate::core::Peer;
 use crate::events::EventBus;
+use crate::network::types::*;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -26,88 +26,6 @@ impl fmt::Display for NetworkError {
 }
 
 impl Error for NetworkError {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ContactStatus {
-    Online,
-    Offline,
-    Away,
-    Busy,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum TrustLevel {
-    Unknown,
-    Pending,
-    Low,
-    Medium,
-    High,
-    Trusted,
-    Blocked,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Contact {
-    pub id: String,
-    pub name: String,
-    pub address: String,
-    pub status: ContactStatus,
-    pub trust_level: TrustLevel,
-    pub last_seen: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ChatMessageType {
-    Text,
-    File,
-    Image,
-    Voice,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DeliveryStatus {
-    Pending,
-    Sent,
-    Delivered,
-    Read,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub id: String,
-    pub from: String,
-    pub to: String,
-    pub content: String,
-    pub msg_type: ChatMessageType,
-    pub timestamp: u64,
-    pub delivery_status: DeliveryStatus,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkStats {
-    pub connected_peers: u32,
-    pub total_messages_sent: u64,
-    pub total_messages_received: u64,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub uptime_seconds: u64,
-    pub messages_sent: u64,     // Required field
-    pub messages_received: u64, // Required field
-    pub total_connections: u32, // Required field
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerData {
-    pub id: String,
-    pub name: String,
-    pub address: String,
-    pub public_key: Vec<u8>,
-    pub connected_at: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-}
 
 pub struct NetworkManager {
     peer: Peer,
@@ -215,11 +133,6 @@ impl NetworkManager {
         let chat_key = format!("chat_{}", contact.name);
         chats.entry(chat_key).or_insert_with(Vec::new).push(message);
 
-        // Update stats with all required fields
-        let mut stats = self.stats.clone();
-        stats.total_messages_sent += 1;
-        stats.messages_sent += 1;
-
         Ok(message_id)
     }
 
@@ -272,8 +185,6 @@ impl NetworkManager {
     }
 
     pub async fn update_peer_name(&self) -> Result<(), NetworkError> {
-        // Note: This would need proper implementation to update the peer name
-        // For now, this is a placeholder
         Ok(())
     }
 
