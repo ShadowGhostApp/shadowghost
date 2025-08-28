@@ -7,150 +7,115 @@
 git clone <repo-url>
 cd shadowghost
 
-# 2. Установите зависимости
+# 2. Установите flutter_rust_bridge_codegen глобально (обязательно!)
+cargo install flutter_rust_bridge_codegen
+
+# 3. Установите зависимости Flutter
 flutter pub get
 
-# 3. Запустите приложение (мост генерируется автоматически)
+# 4. Сгенерируйте bridge код
+flutter_rust_bridge_codegen generate
+
+# 5. Запустите приложение
 flutter run
 ```
 
-Вот и всё! Мост Rust-Flutter генерируется автоматически при первом запуске.
+## Предварительные требования
+
+Перед началом разработки убедитесь, что у вас установлены:
+
+- **Rust** (последняя стабильная версия)
+- **Flutter SDK** (последняя стабильная версия)
+- **flutter_rust_bridge_codegen** CLI инструмент (см. установку ниже)
+
+### Установка flutter_rust_bridge_codegen
+
+**Этот шаг обязателен перед использованием любых команд генерации bridge:**
+
+```bash
+# Установите CLI инструмент глобально
+cargo install flutter_rust_bridge_codegen
+
+# Проверьте установку
+flutter_rust_bridge_codegen --version
+```
 
 ## Технологический стек
 
-- **Бэкенд**: Rust
-- **Фронтенд**: Flutter
+- **Backend**: Rust
+- **Frontend**: Flutter
+- **Bridge**: Flutter Rust Bridge v2
 
-# Команды установки Flutter SDK
+## Структура проекта
 
-## Windows
-```powershell
-# Chocolatey
-choco install flutter
-
-# Scoop
-scoop bucket add extras
-scoop install flutter
-
-# Git
-git clone https://github.com/flutter/flutter.git -b stable
+```
+shadowghost/
+├── lib/                          # Flutter/Dart код
+│   ├── bridge_generated/         # Сгенерированный bridge код (НЕ РЕДАКТИРОВАТЬ)
+│   └── main.dart                # Точка входа Flutter приложения
+├── rust/                        # Rust код
+│   ├── src/
+│   │   ├── lib.rs              # Точка входа Rust библиотеки
+│   │   └── api/                # Экспортируемые функции для Flutter
+│   └── Cargo.toml
+├── flutter_rust_bridge.yaml    # Конфигурация bridge
+└── pubspec.yaml
 ```
 
-## macOS
+## Рабочий процесс разработки
+
+### Генерация Bridge кода
+
 ```bash
-# Homebrew
-brew install --cask flutter
+# Сгенерировать bridge код (после любых изменений в Rust API)
+flutter_rust_bridge_codegen generate
 
-# Git
-git clone https://github.com/flutter/flutter.git -b stable
-export PATH="$PATH:`pwd`/flutter/bin"
-```
+# Очистить и перегенерировать при необходимости
+rm -rf lib/bridge_generated
+flutter_rust_bridge_codegen generate
 
-## Linux
-```bash
-# Snap
-sudo snap install flutter --classic
-
-# Git
-git clone https://github.com/flutter/flutter.git -b stable
-export PATH="$PATH:`pwd`/flutter/bin"
-```
-
-## Настройка среды разработки
-
-### Установка зависимостей
-
-#### Rust (при необходимости)
-с```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-```
-
-#### Android Studio
-```bash
-# Скачайте с https://developer.android.com/studio
-# Установите Android SDK, Android SDK Command-line Tools, Android SDK Build-Tools
-```
-
-#### VS Code
-```bash
-# Расширения для Flutter
-code --install-extension Dart-Code.flutter
-code --install-extension Dart-Code.dart-code
-```
-
-### Проверка и настройка
-```bash
-# Проверьте установку и зависимости
-flutter doctor
-
-# Проверьте версию
-flutter --version
-
-# Примите лицензии Android SDK
-flutter doctor --android-licenses
-
-# Создайте новый тестовый проект
-flutter create test_app
-cd test_app
+# Полный цикл разработки
+flutter pub get
+flutter_rust_bridge_codegen generate
 flutter run
 ```
 
-### Настройка устройств
-```bash
-# Покажите доступные устройства
-flutter devices
+### Добавление новых Rust функций
 
-# Включите поддержку веб
-flutter config --enable-web
+1. Добавьте функцию в соответствующий файл `rust/src/api/*.rs` с аннотацией `#[frb]`
+2. Экспортируйте модуль в `rust/src/lib.rs`
+3. **Обязательно выполните** `flutter_rust_bridge_codegen generate`
+4. Используйте сгенерированный Dart код из `lib/bridge_generated/`
 
-# Включите поддержку десктопных приложений
-flutter config --enable-windows-desktop
-flutter config --enable-macos-desktop  
-flutter config --enable-linux-desktop
-```
+Пример:
 
-### Расширенные команды
+```rust
+// rust/src/api/contacts.rs
+use flutter_rust_bridge::frb;
 
-#### Ручная генерация моста
-```bash
-# Если автогенерация не работает
-dart run build_runner build
-
-# Режим наблюдения для разработки
-dart run build_runner watch
-
-# Очистка сгенерированных файлов
-dart pub run build_runner clean
-```
-
-### Структура проекта
-```
-shadowghost/
-├── lib/                       # Flutter/Dart код
-│   └── bridge_generated/      # Автогенерированный код моста
-├── rust/                      # Rust код
-│   ├── api/                   # Экспортированные функции для Flutter
-│   ├── src/
-│   │   └── lib.rs             # Точка входа в библиотеку Rust
-│   └── Cargo.toml
-├── flutter_rust_bridge.yaml   # Конфигурация моста
-└── pubspec.yaml
+#[frb(sync)]
+pub fn get_contacts() -> Result<Vec<String>, String> {
+    // Ваша реализация
+    Ok(vec!["Контакт 1".to_string()])
+}
 ```
 
 ## Процесс создания Pull Request
 
 1. **Создайте форк и ветку**
+
    ```bash
    git checkout -b feature/your-feature
    ```
 
 2. **Внесите изменения**
-   - Редактируйте Rust код в `rust/src/`
-   - Код моста перегенерируется автоматически в режиме наблюдения
-   - Редактируйте Flutter код в `lib/`
+
+   - Отредактируйте Rust код в `rust/src/`
+   - **Обязательно выполните**: `flutter_rust_bridge_codegen generate`
+   - Отредактируйте Flutter код в `lib/`
 
 3. **Тестирование**
+
    ```bash
    # Тесты Rust
    cargo test
@@ -164,51 +129,84 @@ shadowghost/
    ```
 
 4. **Формат коммитов**
+
    ```bash
-   git commit -m "feat: добавить голосовые звонки"
-   git commit -m "fix: исправить таймаут соединения"
+   git commit -m "feat: добавить голосовые вызовы"
+   git commit -m "fix: исправить таймаут подключения"
    git commit -m "docs: обновить документацию API"
-   git commit -m "bridge: обновить экспорт Rust FFI"
    ```
 
 5. **Чеклист для PR**
-   - [ ] Код моста перегенерирован (автоматически)
-   - [ ] Тесты Rust пройдены (`cargo test`)
-   - [ ] Тесты Flutter пройдены (`flutter test`)
+   - [ ] CLI инструмент `flutter_rust_bridge_codegen` установлен
+   - [ ] Bridge код перегенерирован (`flutter_rust_bridge_codegen generate`)
+   - [ ] Тесты Rust прошли (`cargo test`)
+   - [ ] Тесты Flutter прошли (`flutter test`)
    - [ ] Код отформатирован (`cargo fmt` + `flutter format .`)
    - [ ] Сгенерированные файлы не редактировались вручную
-   - [ ] Безопасность проверена (если применимо)
 
-## Руководство по Flutter Rust Bridge
+## Рекомендации по Flutter Rust Bridge
 
-- ✅ Размещайте экспортированные функции в `rust/src/api.rs`
-- ✅ Используйте режим наблюдения во время разработки
-- ✅ Позвольте build_runner обрабатывать генерацию кода
-- ✅ Следуйте соглашениям именования Rust для экспорта
+### ДЕЛАТЬ
 
-### НЕ ДЕЛАЙТЕ
+- ✅ Установите `flutter_rust_bridge_codegen` глобально перед разработкой
+- ✅ Размещайте экспортируемые функции в модулях `rust/src/api/`
+- ✅ Используйте аннотации `#[frb]` для экспортируемых функций
+- ✅ Используйте `#[frb(sync)]` для синхронных функций
+- ✅ Используйте `Result<T, String>` для обработки ошибок
+- ✅ **Всегда** перегенерируйте bridge код после изменений в Rust API
+
+### НЕ ДЕЛАТЬ
+
 - ❌ Не редактируйте файлы в `lib/bridge_generated/` вручную
-- ❌ Не коммитьте сгенерированные файлы, если они в `.gitignore`
-- ❌ Не используйте `tool/build.dart` (устарело)
-- ❌ Не запускайте `flutter_rust_bridge_codegen` вручную
+- ❌ Не пропускайте перегенерацию bridge после изменений API
+- ❌ Не делайте коммит без выполнения `flutter_rust_bridge_codegen generate`
+- ❌ Не используйте команды генерации bridge без предварительной установки CLI инструмента
 
-### Добавление новых функций Rust
-1. Добавьте функцию в `rust/src/api.rs`
-2. Мост перегенерируется автоматически в режиме наблюдения
-3. Используйте сгенерированный Dart код в `lib/bridge_generated/`
+## Частые проблемы
 
-## Руководство по безопасности
-- **Всегда** проверяйте внешние входные данные в Rust и Dart
+### "flutter_rust_bridge_codegen: command not found"
+
+```bash
+# Решение: Установите CLI инструмент глобально
+cargo install flutter_rust_bridge_codegen
+
+# Проверьте установку
+which flutter_rust_bridge_codegen
+```
+
+### Ошибки генерации Bridge
+
+```bash
+# Очистите и перегенерируйте
+rm -rf lib/bridge_generated
+flutter clean
+flutter pub get
+flutter_rust_bridge_codegen generate
+```
+
+### Отсутствующие типы в Dart
+
+- Убедитесь, что функции Rust имеют аннотации `#[frb]`
+- Проверьте, что модули правильно экспортированы в `rust/src/lib.rs`
+- Проверьте конфигурацию `flutter_rust_bridge.yaml`
+- Перегенерируйте bridge код
+
+## Рекомендации по безопасности
+
+- **Всегда** валидируйте внешние входные данные в Rust и Dart
 - Используйте **безопасные настройки по умолчанию** в криптографических функциях
-- **Тестируйте** границы безопасности моста
-- Сообщайте о проблемах безопасности конфиденциально на: ~`security@shadowghost.dev`~
+- **Тестируйте** границы безопасности bridge
+- Сообщайте о проблемах безопасности конфиденциально
 
 ## Архитектурные заметки
+
 Проект использует Flutter Rust Bridge v2 для бесшовной интеграции:
-- **Автоматическая генерация кода** из Rust в Dart
+
+- **Ручная генерация кода** из Rust в Dart через CLI инструмент
 - **Типобезопасность** через границы языков
-- **Передача данных без копирования** где возможно
-- **Асинхронная поддержка** для неблокирующих операций
+- **Поддержка асинхронности** для неблокирующих операций
+- **Обработка ошибок на основе Result** для надежного распространения ошибок
 
 ## Лицензия
+
 Участвуя в проекте, вы соглашаетесь с тем, что ваши вклады будут лицензированы под CC BY-NC-SA 4.0.

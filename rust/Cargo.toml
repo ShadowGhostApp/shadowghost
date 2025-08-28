@@ -96,9 +96,6 @@ mock_crypto = []
 debug_networking = []
 benchmark = ["dep:criterion"]
 
-[build-dependencies]
-flutter_rust_bridge_codegen = "2.11.1"
-
 [package.metadata.playground]
 features = ["default"]
 

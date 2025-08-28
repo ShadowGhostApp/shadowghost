@@ -5,8 +5,8 @@ pub mod protocol;
 pub mod tls_masking;
 pub mod types;
 
-pub use discovery::*;
-pub use manager::*;
-pub use protocol::*;
-pub use tls_masking::*;
+pub use discovery::NetworkDiscovery;
+pub use manager::NetworkManager;
+pub use protocol::{MessagePayload, MessageType, ProtocolMessage};
+pub use tls_masking::TlsMasking;
 pub use types::*;

@@ -42,62 +42,57 @@ overflow-checks = false
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["ShadowGhost Team"]
-license = "MIT"
+authors = ["ShadowGhost Open Team"]
+license = "СС BY-NC-SA 4.0"
 repository = "https://github.com/shadowghost/shadowghost"
 description = "Secure P2P Messenger with Flutter UI"
 keywords = ["p2p", "messenger", "encryption", "flutter"]
 categories = ["network-programming", "cryptography"]
 
-# Common dependencies shared across workspace members
 [workspace.dependencies]
-# Async runtime - основа для асинхронности
+# Async runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 
-# Serialization - сериализация данных
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "0.9.5"
 
-# Crypto - криптографические функции
+# Crypto
 aes-gcm = "0.10"
 rsa = { version = "0.9", features = ["std", "pem"] }
 sha2 = "0.10"
-rand = "0.8"
+rand = "0.9.2"
 argon2 = "0.5"
 
-# Time - работа с датой и временем
+# Time
 chrono = { version = "0.4", features = ["serde"] }
 
 # UUID generation
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0.16"
 anyhow = "1.0"
 
 # Logging
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11.8"
 
 # Flutter bridge
-flutter_rust_bridge = "2.0"
+flutter_rust_bridge = "2.11.1"
 
 # Base64 encoding
 base64 = "0.22"
 
 # Network
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12.23", features = ["json"] }
 
-# Тестирование и разработка (перемещено из dev-dependencies)
 tokio-test = "0.4"
 tempfile = "3.21.0"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 proptest = "1.4"
-
-# Development tools - оставляем пустой, так как все зависимости перемещены выше
-[workspace.dev-dependencies]
 
 # Optimization settings for dependencies
 [profile.release.package.flutter_rust_bridge]
