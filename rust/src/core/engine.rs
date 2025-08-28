@@ -1,4 +1,5 @@
 use crate::core::types::*;
+use crate::core::manager::*;
 use crate::events::EventBus;
 use crate::{chats, contacts, crypto, network, storage};
 use std::path::PathBuf;
@@ -37,8 +38,8 @@ impl Engine {
             .map_err(|e| CoreError::Manager(e.to_string()))?;
 
         let chats_manager = chats::Manager::new(
-            std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager.clone())),
-            event_bus.clone(),
+            std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager.clone())), 
+            event_bus.clone()
         )
         .map_err(|e| CoreError::Manager(e))?;
 

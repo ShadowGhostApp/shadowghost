@@ -1,4 +1,5 @@
 pub mod chats;
+pub mod chats;
 pub mod contacts;
 pub mod core;
 pub mod crypto;
