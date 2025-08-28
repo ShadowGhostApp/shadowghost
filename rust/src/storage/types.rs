@@ -96,6 +96,24 @@ impl std::fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageOptimizationResult {
+    pub original_size_bytes: u64,
+    pub optimized_size_bytes: u64,
+    pub space_saved_bytes: u64,
+    pub messages_deduplicated: u32,
+    pub optimization_time: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageHealth {
+    pub is_healthy: bool,
+    pub total_size_bytes: u64,
+    pub fragmentation_percent: f64,
+    pub corruption_issues: u32,
+    pub last_check: chrono::DateTime<chrono::Utc>,
+    pub recommendations: Vec<String>,
+}
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {

@@ -1,11 +1,9 @@
-﻿pub mod config;
-pub mod engine;
+﻿pub mod engine;
 pub mod flutter_api;
-pub mod health;
-pub mod peer;
-pub mod profile;
+pub mod manager;
+pub mod types;
 
-pub use config::*;
 pub use engine::*;
-pub use health::*;
-pub use profile::*;
+pub use flutter_api::*;
+pub use manager::*;
+pub use types::*;
