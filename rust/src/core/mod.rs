@@ -3,6 +3,7 @@ pub mod engine;
 pub mod flutter_api;
 pub mod health;
 pub mod lifecycle;
+pub mod manager;
 pub mod metrics;
 pub mod peer;
 pub mod profile;
@@ -15,20 +16,5 @@ pub use health::*;
 pub use lifecycle::*;
 pub use metrics::*;
 pub use peer::*;
-pub use profile::*;
-pub use types::*;
-
-pub trait ShadowGhostCore {
-    fn is_initialized(&self) -> bool;
-    fn get_event_bus(&self) -> &crate::events::EventBus;
-}
-
-impl ShadowGhostCore for Engine {
-    fn is_initialized(&self) -> bool {
-        true // Engine is initialized when created
-    }
-
-    fn get_event_bus(&self) -> &crate::events::EventBus {
-        &self.event_bus
-    }
-}
+pub use profile::ProfileManager;
+pub use types::{Config, CoreError, Profile};

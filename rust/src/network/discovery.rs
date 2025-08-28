@@ -1,33 +1,10 @@
-use serde::{Deserialize, Serialize};
+use crate::network::types::*;
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, RwLock};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveredPeer {
-    pub id: String,
-    pub address: IpAddr,
-    pub port: u16,
-    pub name: String,
-    pub last_seen: u64,
-    pub public_key: Vec<u8>,
-    pub protocol_version: u8,
-    pub capabilities: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnnouncementMessage {
-    pub peer_id: String,
-    pub peer_name: String,
-    pub port: u16,
-    pub public_key: Vec<u8>,
-    pub protocol_version: u8,
-    pub capabilities: Vec<String>,
-    pub timestamp: u64,
-}
 
 pub struct NetworkDiscovery {
     local_port: u16,
@@ -324,93 +301,6 @@ impl NetworkDiscovery {
             .collect()
     }
 
-    pub async fn scan_local_network(
-        &self,
-    ) -> Result<Vec<DiscoveredPeer>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut discovered = Vec::new();
-
-        let local_interfaces = self.get_local_network_ranges().await?;
-
-        for range in local_interfaces {
-            let scan_results = self.scan_ip_range(&range).await?;
-            discovered.extend(scan_results);
-        }
-
-        Ok(discovered)
-    }
-
-    async fn get_local_network_ranges(
-        &self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(vec![
-            "192.168.1.0/24".to_string(),
-            "192.168.0.0/24".to_string(),
-            "10.0.0.0/24".to_string(),
-            "172.16.0.0/24".to_string(),
-        ])
-    }
-
-    async fn scan_ip_range(
-        &self,
-        range: &str,
-    ) -> Result<Vec<DiscoveredPeer>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut discovered = Vec::new();
-
-        let base_ip = range.split('/').next().unwrap_or("192.168.1.0");
-        let ip_parts: Vec<&str> = base_ip.split('.').collect();
-
-        if ip_parts.len() != 4 {
-            return Ok(discovered);
-        }
-
-        let base = format!("{}.{}.{}", ip_parts[0], ip_parts[1], ip_parts[2]);
-
-        let mut tasks = Vec::new();
-
-        for i in 1..=254 {
-            let ip = format!("{}.{}", base, i);
-            let port = self.local_port;
-
-            let task = tokio::spawn(async move { Self::probe_peer(&ip, port).await });
-
-            tasks.push(task);
-        }
-
-        for task in tasks {
-            if let Ok(Some(peer)) = task.await {
-                discovered.push(peer);
-            }
-        }
-
-        Ok(discovered)
-    }
-
-    async fn probe_peer(ip: &str, port: u16) -> Option<DiscoveredPeer> {
-        let addr = format!("{}:{}", ip, port);
-
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            tokio::net::TcpStream::connect(&addr),
-        )
-        .await
-        {
-            Ok(Ok(_stream)) => Some(DiscoveredPeer {
-                id: uuid::Uuid::new_v4().to_string(),
-                address: ip.parse().ok()?,
-                port,
-                name: format!("Peer@{}", ip),
-                last_seen: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-                public_key: vec![],
-                protocol_version: 1,
-                capabilities: vec!["unknown".to_string()],
-            }),
-            _ => None,
-        }
-    }
-
     pub async fn get_discovery_statistics(&self) -> DiscoveryStatistics {
         let peers = self.discovered_peers.read().await;
         let total_peers = peers.len();
@@ -439,13 +329,4 @@ impl NetworkDiscovery {
             last_discovery: chrono::Utc::now(),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct DiscoveryStatistics {
-    pub total_discovered: usize,
-    pub active_peers: usize,
-    pub unique_capabilities: usize,
-    pub discovery_uptime: u64,
-    pub last_discovery: chrono::DateTime<chrono::Utc>,
 }
