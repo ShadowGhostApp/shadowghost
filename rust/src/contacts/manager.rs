@@ -142,40 +142,38 @@ impl ContactManager {
     }
 
     pub async fn batch_block_contacts(
-        &mut self,
+        &self,
         contact_ids: Vec<String>,
     ) -> Result<u32, ContactError> {
         let mut blocked_count = 0;
-
         for contact_id in contact_ids {
             if self.block_contact(&contact_id).is_ok() {
                 blocked_count += 1;
             }
         }
-
         if blocked_count > 0 {
+            // Если нужно сохранить изменения в хранилище после массовой блокировки
+            // Предполагается, что у нас есть метод save_contacts
             self.save_contacts().await?;
         }
-
         Ok(blocked_count)
     }
 
+    // Метод для пакетной разблокировки контактов
     pub async fn batch_unblock_contacts(
-        &mut self,
+        &self,
         contact_ids: Vec<String>,
     ) -> Result<u32, ContactError> {
         let mut unblocked_count = 0;
-
         for contact_id in contact_ids {
             if self.unblock_contact(&contact_id).is_ok() {
                 unblocked_count += 1;
             }
         }
-
         if unblocked_count > 0 {
+            // Если нужно сохранить изменения в хранилище после массовой разблокировки
             self.save_contacts().await?;
         }
-
         Ok(unblocked_count)
     }
 
@@ -192,8 +190,9 @@ impl ContactManager {
         }
     }
 
+    // Метод для пометки контактов как offline
     pub async fn mark_contacts_offline(
-        &mut self,
+        &self,
         older_than_minutes: u32,
     ) -> Result<u32, ContactError> {
         let cutoff_time = chrono::Utc::now() - chrono::Duration::minutes(older_than_minutes as i64);
@@ -280,6 +279,7 @@ impl ContactManager {
         Ok(cleanup_count)
     }
 
+    // Проверка валидности данных контактов
     pub fn validate_contact_data(&self) -> Vec<ContactValidationIssue> {
         let mut issues = Vec::new();
         let contacts = self.get_contacts();
@@ -316,6 +316,7 @@ impl ContactManager {
         issues
     }
 
+    // Вспомогательный метод для проверки валидности адреса
     fn is_valid_address(&self, address: &str) -> bool {
         if address.is_empty() {
             return false;
@@ -509,4 +510,3 @@ pub fn parse_sg_link(sg_link: &str, current_peer_name: &str) -> Result<Contact, 
     };
 
     Ok(contact)
-}

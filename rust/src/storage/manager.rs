@@ -266,7 +266,7 @@ impl StorageManager {
 
         Ok(removed_count)
     }
-
+  
     pub async fn save_contact(&self, contact: &Contact) -> Result<(), StorageError> {
         let mut contacts = self.contacts.write().await;
         contacts.insert(contact.id.clone(), contact.clone());
