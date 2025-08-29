@@ -121,3 +121,6 @@ consolidate-commits = true
 pre-release-replacements = [
     { file = "README.md", search = "shadowghost = \"[a-z0-9\\.-]+\"", replace = "shadowghost = \"{{version}}\"" },
 ]
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

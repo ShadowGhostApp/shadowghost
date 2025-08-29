@@ -1,7 +1,6 @@
 use crate::core::Peer;
 use crate::events::EventBus;
 use crate::network::types::*;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;

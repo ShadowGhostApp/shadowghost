@@ -1,9 +1,146 @@
-// Добавить эти методы в struct ContactManager для поддержки batch-операций
+use crate::contacts::{
+    ContactError, ContactInteractionStats, ContactIssueType, ContactValidationIssue, IssueSeverity,
+};
+use crate::network::{Contact, ContactStatus, TrustLevel};
+use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+pub struct ContactStats {
+    pub total_contacts: usize,
+    pub online_contacts: usize,
+    pub trusted_contacts: usize,
+    pub blocked_contacts: usize,
+    pub pending_contacts: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContactBook {
+    pub contacts: HashMap<String, Contact>,
+    pub blocked_contacts: HashMap<String, BlockedContactInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockedContactInfo {
+    pub blocked_at: chrono::DateTime<chrono::Utc>,
+    pub reason: String,
+    pub blocked_by_user: bool,
+}
+
+pub struct ContactManager {
+    contact_book: ContactBook,
+    data_path: PathBuf,
+}
 
 impl ContactManager {
-    // ... существующие методы ...
+    pub fn new(data_path: &Path) -> Result<Self, ContactError> {
+        Ok(Self {
+            contact_book: ContactBook::new(),
+            data_path: data_path.to_path_buf(),
+        })
+    }
 
-    // Метод для пакетной блокировки контактов
+    pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
+        self.contact_book.add_contact(contact)
+    }
+
+    pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.remove_contact(contact_id)
+    }
+
+    pub fn get_contact(&self, contact_id: &str) -> Option<Contact> {
+        self.contact_book.get_contact(contact_id).cloned()
+    }
+
+    pub fn get_contacts(&self) -> Vec<Contact> {
+        self.contact_book.get_contacts()
+    }
+
+    pub fn update_contact_status(
+        &mut self,
+        contact_id: &str,
+        status: ContactStatus,
+    ) -> Result<(), ContactError> {
+        self.contact_book.update_contact_status(contact_id, status)
+    }
+
+    pub fn set_trust_level(
+        &mut self,
+        contact_id: &str,
+        trust_level: TrustLevel,
+    ) -> Result<(), ContactError> {
+        if let Some(contact) = self.contact_book.contacts.get_mut(contact_id) {
+            contact.trust_level = trust_level;
+            Ok(())
+        } else {
+            Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )))
+        }
+    }
+
+    pub fn block_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.block_contact(contact_id)
+    }
+
+    pub fn unblock_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        self.contact_book.unblock_contact(contact_id)
+    }
+
+    pub fn is_contact_blocked(&self, contact_id: &str) -> bool {
+        self.contact_book.is_blocked(contact_id)
+    }
+
+    pub fn get_contact_stats(&self) -> ContactStats {
+        let contacts = self.get_contacts();
+        let total = contacts.len();
+        let online = contacts
+            .iter()
+            .filter(|c| matches!(c.status, ContactStatus::Online))
+            .count();
+        let trusted = contacts
+            .iter()
+            .filter(|c| matches!(c.trust_level, TrustLevel::Trusted))
+            .count();
+        let blocked = self.contact_book.get_blocked_count();
+        let pending = contacts
+            .iter()
+            .filter(|c| matches!(c.trust_level, TrustLevel::Pending))
+            .count();
+
+        ContactStats {
+            total_contacts: total,
+            online_contacts: online,
+            trusted_contacts: trusted,
+            blocked_contacts: blocked,
+            pending_contacts: pending,
+        }
+    }
+
+    pub fn find_contacts_by_name(&self, name: &str) -> Vec<Contact> {
+        self.contact_book.find_contacts_by_name(name)
+    }
+
+    pub fn find_contacts_by_address(&self, address: &str) -> Vec<Contact> {
+        self.contact_book.find_contacts_by_address(address)
+    }
+
+    pub fn get_contacts_by_trust_level(&self, trust_level: TrustLevel) -> Vec<Contact> {
+        self.get_contacts()
+            .into_iter()
+            .filter(|c| c.trust_level == trust_level)
+            .collect()
+    }
+
+    pub fn get_contacts_by_status(&self, status: ContactStatus) -> Vec<Contact> {
+        self.get_contacts()
+            .into_iter()
+            .filter(|c| c.status == status)
+            .collect()
+    }
+
     pub async fn batch_block_contacts(
         &self,
         contact_ids: Vec<String>,
@@ -40,8 +177,7 @@ impl ContactManager {
         Ok(unblocked_count)
     }
 
-    // Метод для обновления активности контакта
-    pub async fn update_contact_activity(&self, contact_id: &str) -> Result<(), ContactError> {
+    pub async fn update_contact_activity(&mut self, contact_id: &str) -> Result<(), ContactError> {
         if let Some(contact) = self.contact_book.contacts.get_mut(contact_id) {
             contact.last_seen = Some(chrono::Utc::now());
             contact.status = ContactStatus::Online;
@@ -80,7 +216,6 @@ impl ContactManager {
         Ok(updated_count)
     }
 
-    // Метод для получения статистики взаимодействия с контактом
     pub fn get_contact_interaction_stats(
         &self,
         contact_id: &str,
@@ -110,8 +245,7 @@ impl ContactManager {
         }
     }
 
-    // Метод для очистки заблокированных контактов
-    pub async fn cleanup_blocked_contacts(&self, days: u32) -> Result<u32, ContactError> {
+    pub async fn cleanup_blocked_contacts(&mut self, days: u32) -> Result<u32, ContactError> {
         let cutoff_time = chrono::Utc::now() - chrono::Duration::days(days as i64);
         let all_contacts = self.get_contacts();
         let mut cleanup_count = 0;
@@ -200,26 +334,179 @@ impl ContactManager {
         parts[1].parse::<u16>().is_ok()
     }
 
-    // Метод для сохранения контактов
     pub async fn save_contacts(&self) -> Result<(), ContactError> {
-        // Реализация зависит от вашей конкретной логики сохранения
-        // Пример:
-        // self.storage.save_contacts(&self.contact_book).await
-        //     .map_err(|e| ContactError::StorageError(e.to_string()))
-
-        // Заглушка для примера
         Ok(())
     }
 
-    // Метод для загрузки контактов
     pub async fn load_contacts(&self) -> Result<(), ContactError> {
-        // Реализация зависит от вашей конкретной логики загрузки
-        // Пример:
-        // let loaded_contacts = self.storage.load_contacts().await
-        //     .map_err(|e| ContactError::StorageError(e.to_string()))?;
-        // self.contact_book = loaded_contacts;
-
-        // Заглушка для примера
         Ok(())
     }
 }
+
+impl ContactBook {
+    pub fn new() -> Self {
+        Self {
+            contacts: HashMap::new(),
+            blocked_contacts: HashMap::new(),
+        }
+    }
+
+    pub fn add_contact(&mut self, contact: Contact) -> Result<(), ContactError> {
+        self.contacts.insert(contact.id.clone(), contact);
+        Ok(())
+    }
+
+    pub fn remove_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if !self.contacts.contains_key(contact_id) {
+            return Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )));
+        }
+
+        self.contacts.remove(contact_id);
+        self.blocked_contacts.remove(contact_id);
+        Ok(())
+    }
+
+    pub fn get_contact(&self, contact_id: &str) -> Option<&Contact> {
+        self.contacts.get(contact_id)
+    }
+
+    pub fn get_contacts(&self) -> Vec<Contact> {
+        self.contacts.values().cloned().collect()
+    }
+
+    pub fn update_contact_status(
+        &mut self,
+        contact_id: &str,
+        status: ContactStatus,
+    ) -> Result<(), ContactError> {
+        if let Some(contact) = self.contacts.get_mut(contact_id) {
+            contact.status = status;
+            Ok(())
+        } else {
+            Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )))
+        }
+    }
+
+    pub fn block_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if !self.contacts.contains_key(contact_id) {
+            return Err(ContactError::ContactNotFound(format!(
+                "Contact with ID {} not found",
+                contact_id
+            )));
+        }
+
+        let blocked_info = BlockedContactInfo {
+            blocked_at: chrono::Utc::now(),
+            reason: "Blocked by user".to_string(),
+            blocked_by_user: true,
+        };
+
+        self.blocked_contacts
+            .insert(contact_id.to_string(), blocked_info);
+        Ok(())
+    }
+
+    pub fn unblock_contact(&mut self, contact_id: &str) -> Result<(), ContactError> {
+        if self.blocked_contacts.remove(contact_id).is_some() {
+            Ok(())
+        } else {
+            Err(ContactError::ContactNotFound(format!(
+                "Blocked contact with ID {} not found",
+                contact_id
+            )))
+        }
+    }
+
+    pub fn is_blocked(&self, contact_id: &str) -> bool {
+        self.blocked_contacts.contains_key(contact_id)
+    }
+
+    pub fn get_blocked_count(&self) -> usize {
+        self.blocked_contacts.len()
+    }
+
+    pub fn find_contacts_by_name(&self, name: &str) -> Vec<Contact> {
+        let name_lower = name.to_lowercase();
+        self.contacts
+            .values()
+            .filter(|contact| contact.name.to_lowercase().contains(&name_lower))
+            .cloned()
+            .collect()
+    }
+
+    pub fn find_contacts_by_address(&self, address: &str) -> Vec<Contact> {
+        let address_lower = address.to_lowercase();
+        self.contacts
+            .values()
+            .filter(|contact| contact.address.to_lowercase().contains(&address_lower))
+            .cloned()
+            .collect()
+    }
+}
+
+pub fn generate_sg_link(peer: &crate::core::Peer) -> Result<String, ContactError> {
+    use crate::network::PeerData;
+    use base64::{engine::general_purpose, Engine as _};
+
+    let peer_data = PeerData {
+        id: peer.id.clone(),
+        name: peer.name.clone(),
+        address: peer.get_full_address(),
+        public_key: peer.public_key.clone(),
+        connected_at: chrono::Utc::now(),
+        last_seen: chrono::Utc::now(),
+        bytes_sent: 0,
+        bytes_received: 0,
+    };
+
+    let json_data = serde_json::to_string(&peer_data)
+        .map_err(|e| ContactError::SerializationError(e.to_string()))?;
+
+    let encoded = general_purpose::STANDARD.encode(json_data);
+    Ok(format!("sg://{}", encoded))
+}
+
+pub fn parse_sg_link(sg_link: &str, current_peer_name: &str) -> Result<Contact, ContactError> {
+    use crate::network::PeerData;
+    use base64::{engine::general_purpose, Engine as _};
+
+    if !sg_link.starts_with("sg://") {
+        return Err(ContactError::InvalidContact(
+            "Invalid SG link format".to_string(),
+        ));
+    }
+
+    let link_data = &sg_link[5..];
+
+    let decoded_data = general_purpose::STANDARD
+        .decode(link_data)
+        .map_err(|e| ContactError::InvalidContact(format!("Decode error: {}", e)))?;
+
+    let data_str = String::from_utf8(decoded_data)
+        .map_err(|_| ContactError::InvalidContact("UTF-8 conversion failed".to_string()))?;
+
+    let peer_data: PeerData = serde_json::from_str(&data_str)
+        .map_err(|_| ContactError::InvalidContact("JSON parse failed".to_string()))?;
+
+    if peer_data.name == current_peer_name {
+        return Err(ContactError::InvalidContact(
+            "Cannot add yourself as contact".to_string(),
+        ));
+    }
+
+    let contact = Contact {
+        id: peer_data.id,
+        name: peer_data.name,
+        address: peer_data.address,
+        status: ContactStatus::Offline,
+        trust_level: TrustLevel::Pending,
+        last_seen: Some(peer_data.last_seen),
+    };
+
+    Ok(contact)

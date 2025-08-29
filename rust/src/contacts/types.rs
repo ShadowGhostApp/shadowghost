@@ -1,4 +1,3 @@
-use crate::network::{Contact, ContactStatus, TrustLevel};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -114,7 +113,16 @@ pub struct ContactExportOptions {
 pub enum ContactExportFormat {
     Json,
     Csv,
-    Vcf, // vCard format
+    Vcf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactStats {
+    pub total_contacts: usize,
+    pub online_contacts: usize,
+    pub trusted_contacts: usize,
+    pub blocked_contacts: usize,
+    pub pending_contacts: usize,
 }
 
 impl Default for ContactSearchQuery {

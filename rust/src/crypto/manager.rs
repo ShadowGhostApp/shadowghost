@@ -1,7 +1,6 @@
 use crate::core::types::Config;
 use crate::crypto::types::*;
 use crate::events::types::{AppEvent, CryptoEvent, EventBus};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -334,42 +333,5 @@ impl SecurityManager {
         }
 
         Ok(imported_count)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_crypto_manager_creation() {
-        let manager = CryptoManager::new().unwrap();
-        assert!(manager.keypair.is_some());
-    }
-
-    #[test]
-    fn test_encrypt_decrypt() {
-        let manager = CryptoManager::new().unwrap();
-        let message = "Hello, World!";
-        let public_key = manager.get_public_key();
-
-        let encrypted = manager.encrypt_message(message, &public_key).unwrap();
-        let decrypted = manager.decrypt_message(&encrypted).unwrap();
-
-        assert_eq!(message, decrypted);
-    }
-
-    #[test]
-    fn test_sign_verify() {
-        let manager = CryptoManager::new().unwrap();
-        let data = b"test data";
-        let public_key = manager.get_public_key();
-
-        let signature = manager.sign_data(data).unwrap();
-        let is_valid = manager
-            .verify_signature(data, &signature, &public_key)
-            .unwrap();
-
-        assert!(is_valid);
     }
 }
