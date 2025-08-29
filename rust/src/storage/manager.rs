@@ -18,7 +18,7 @@ pub struct StorageManager {
 }
 
 impl StorageManager {
-    pub fn new(data_path: &PathBuf, event_bus: EventBus) -> Result<Self, StorageError> {
+    pub fn new(data_path: &Path, event_bus: EventBus) -> Result<Self, StorageError> {
         let config = StorageConfig::default();
 
         // Ensure data directory exists
@@ -29,7 +29,7 @@ impl StorageManager {
 
         Ok(Self {
             config,
-            data_path: data_path.clone(),
+            data_path: data_path.to_path_buf(),
             event_bus,
             chat_storage: Arc::new(RwLock::new(ChatStorage::new())),
             contacts: Arc::new(RwLock::new(HashMap::new())),
@@ -266,7 +266,7 @@ impl StorageManager {
 
         Ok(removed_count)
     }
-  
+
     pub async fn save_contact(&self, contact: &Contact) -> Result<(), StorageError> {
         let mut contacts = self.contacts.write().await;
         contacts.insert(contact.id.clone(), contact.clone());
@@ -395,7 +395,10 @@ impl StorageManager {
 
         for (contact_id, contact) in contacts.iter() {
             if contact.id != *contact_id {
-                issues.push(format!("Contact ID mismatch: {} vs {}", contact.id, contact_id));
+                issues.push(format!(
+                    "Contact ID mismatch: {} vs {}",
+                    contact.id, contact_id
+                ));
             }
 
             if contact.name.trim().is_empty() {

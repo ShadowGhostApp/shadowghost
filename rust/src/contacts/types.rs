@@ -1,10 +1,8 @@
-use crate::network::{Contact, ContactStatus, TrustLevel};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
-// Re-export network types
 pub use crate::network::{Contact, ContactStatus, TrustLevel};
 
 #[derive(Debug)]
@@ -114,7 +112,16 @@ pub struct ContactExportOptions {
 pub enum ContactExportFormat {
     Json,
     Csv,
-    Vcf, // vCard format
+    Vcf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactStats {
+    pub total_contacts: usize,
+    pub online_contacts: usize,
+    pub trusted_contacts: usize,
+    pub blocked_contacts: usize,
+    pub pending_contacts: usize,
 }
 
 impl Default for ContactSearchQuery {
@@ -159,13 +166,4 @@ impl ContactGroup {
     pub fn contains_contact(&self, contact_id: &str) -> bool {
         self.contact_ids.contains(&contact_id.to_string())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContactStats {
-    pub total_contacts: usize,
-    pub online_contacts: usize,
-    pub trusted_contacts: usize,
-    pub blocked_contacts: usize,
-    pub pending_contacts: usize,
 }

@@ -1,7 +1,6 @@
 use crate::core::types::Config;
 use crate::crypto::types::*;
 use crate::events::types::{AppEvent, CryptoEvent, EventBus};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;

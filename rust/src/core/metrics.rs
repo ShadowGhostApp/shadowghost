@@ -1,4 +1,4 @@
-use crate::core::config::AppConfig;
+use crate::core::types::Config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -42,7 +42,7 @@ pub struct MetricPoint {
 }
 
 pub struct MetricsCollector {
-    config: AppConfig,
+    config: Config,
     start_time: SystemTime,
     metrics_history: HashMap<String, Vec<MetricPoint>>,
     current_metrics: SystemMetrics,
@@ -50,7 +50,7 @@ pub struct MetricsCollector {
 }
 
 impl MetricsCollector {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             start_time: SystemTime::now(),
@@ -107,7 +107,6 @@ impl MetricsCollector {
             timestamp,
         };
 
-        // Store history
         self.record_metric("cpu_usage", self.current_metrics.cpu_usage);
         self.record_metric("memory_usage", self.current_metrics.memory_usage as f64);
         self.record_metric("uptime_seconds", self.current_metrics.uptime_seconds as f64);
@@ -129,15 +128,12 @@ impl MetricsCollector {
             .or_insert_with(Vec::new);
         history.push(point);
 
-        // Keep only last 100 points
         if history.len() > 100 {
             history.remove(0);
         }
     }
 
     fn get_cpu_usage(&self) -> f64 {
-        // Simplified CPU usage calculation
-        // In production, you'd use proper system metrics
         let load = (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -147,9 +143,7 @@ impl MetricsCollector {
     }
 
     fn get_memory_usage(&self) -> u64 {
-        // Simplified memory usage
-        // In production, you'd use proper system metrics
-        1024 * 1024 * 10 // 10MB as example
+        1024 * 1024 * 10
     }
 
     pub fn increment_message_count(&mut self) {

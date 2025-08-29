@@ -81,6 +81,7 @@ wiremock = "0.6.5"
 [features]
 default = ["flutter_bridge", "networking", "crypto"]
 
+flutter = []
 flutter_bridge = ["dep:flutter_rust_bridge"]
 networking = ["tokio/net", "dep:reqwest"]
 crypto = ["dep:aes-gcm", "dep:rsa", "dep:sha2", "dep:argon2"]
@@ -98,6 +99,12 @@ benchmark = ["dep:criterion"]
 
 [package.metadata.playground]
 features = ["default"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(frb_expand)',
+    'cfg(feature, values("flutter_bridge", "networking", "crypto", "cli", "daemon", "metrics", "tracing", "test_mode", "mock_crypto", "debug_networking", "benchmark"))',
+] }
 
 [[bench]]
 name = "benchmarks"

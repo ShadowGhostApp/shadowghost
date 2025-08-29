@@ -1,4 +1,4 @@
-use crate::core::config::AppConfig;
+use crate::core::types::Config;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,14 +22,14 @@ pub struct LifecycleEvent {
 }
 
 pub struct LifecycleManager {
-    config: AppConfig,
+    config: Config,
     current_state: LifecycleState,
     event_history: Vec<LifecycleEvent>,
     start_time: Option<SystemTime>,
 }
 
 impl LifecycleManager {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             current_state: LifecycleState::Uninitialized,
@@ -45,7 +45,6 @@ impl LifecycleManager {
         )
         .await?;
 
-        // Simulate initialization steps
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         self.transition_to(
@@ -69,7 +68,6 @@ impl LifecycleManager {
         )
         .await?;
 
-        // Simulate startup
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         self.transition_to(
@@ -88,7 +86,6 @@ impl LifecycleManager {
         )
         .await?;
 
-        // Simulate graceful shutdown
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         self.transition_to(
@@ -125,7 +122,6 @@ impl LifecycleManager {
 
         self.event_history.push(event);
 
-        // Keep only last 50 events
         if self.event_history.len() > 50 {
             self.event_history.remove(0);
         }
@@ -190,7 +186,6 @@ impl LifecycleManager {
 
         self.event_history.push(event);
 
-        // Keep only last 50 events
         if self.event_history.len() > 50 {
             self.event_history.remove(0);
         }

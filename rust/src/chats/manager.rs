@@ -1,11 +1,10 @@
 use crate::chats::{
-    Chat, ChatBackup, ChatExportOptions, ChatInfo, ChatSearchResult, ChatStatistics, DraftMessage,
-    MessageBatch, MessageFilter,
+    Chat, ChatExportOptions, ChatInfo, ChatSearchResult, ChatStatistics, DraftMessage,
+    MessageFilter,
 };
 use crate::events::{AppEvent, EventBus, StorageEvent};
 use crate::network::{ChatMessage, ChatMessageType, DeliveryStatus};
 use crate::storage::StorageManager;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -67,7 +66,7 @@ impl Manager {
     }
 
     pub async fn create_chat(&self, name: String, is_group: bool) -> Result<Chat, ChatError> {
-        let mut chat = Chat::new(name, is_group);
+        let chat = Chat::new(name, is_group);
 
         let mut chats = self.chats.write().await;
         chats.insert(chat.id.clone(), chat.clone());

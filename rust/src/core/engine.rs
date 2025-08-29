@@ -23,7 +23,10 @@ impl Engine {
         let config = Config::load(&profile_path).map_err(|e| CoreError::Config(e))?;
         let event_bus = EventBus::new();
 
-        // Create managers in correct dependency order
+        let storage_manager_for_chats =
+            storage::StorageManager::new(&profile_path, event_bus.clone())
+                .map_err(|e| CoreError::Manager(e.to_string()))?;
+
         let storage_manager = storage::StorageManager::new(&profile_path, event_bus.clone())
             .map_err(|e| CoreError::Manager(e.to_string()))?;
 
@@ -37,7 +40,7 @@ impl Engine {
             .map_err(|e| CoreError::Manager(e.to_string()))?;
 
         let chats_manager = chats::Manager::new(
-            std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager.clone())),
+            std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager_for_chats)),
             event_bus.clone(),
         )
         .map_err(|e| CoreError::Manager(e))?;
@@ -61,7 +64,6 @@ impl Engine {
             .save(&self.profile_path)
             .map_err(|e| CoreError::Config(e))?;
 
-        // Initialize all managers
         self.storage_manager
             .initialize()
             .await
