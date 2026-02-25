@@ -18,7 +18,8 @@ git.diff
 .idea/
 
 # VS Code
-.vscode/
+.vscode/*
+!.vscode/settings.json
 
 # Flutter/Dart/Pub related
 **/doc/api/
