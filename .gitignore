@@ -99,3 +99,4 @@ android/gradle/wrapper/gradle-wrapper.jar
 # Other
 **/*bridge_generated*
 config.toml
+CLAUDE.md

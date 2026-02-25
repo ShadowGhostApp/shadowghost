@@ -126,6 +126,11 @@ name = "network_integration"
 path = "tests/network_tests.rs"
 required-features = ["networking"]
 
+[[test]]
+name = "p2p_tests"
+path = "tests/p2p_tests.rs"
+required-features = ["networking"]
+
 [package.metadata.commands]
 test-all = "cargo test --all-features"
 bench-all = "cargo bench --all-features"

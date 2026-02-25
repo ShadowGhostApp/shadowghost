@@ -1,116 +1,149 @@
 pub mod events;
 
-use shadowghost::prelude::*;
+use shadowghost::contacts::ContactManager;
+use shadowghost::core::{Peer};
+use shadowghost::events::{AppEvent, EventBus};
+use shadowghost::network::{ChatMessage, Contact, ContactStatus, TrustLevel};
+use shadowghost::storage::StorageManager;
 use std::sync::Once;
 
 static INIT: Once = Once::new();
 
 pub fn init_test_logging() {
     INIT.call_once(|| {
-        env_logger::Builder::from_env("RUST_LOG")
-            .filter_level(log::LevelFilter::Debug)
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
             .is_test(true)
-            .init();
+            .try_init()
+            .ok();
     });
 }
 
 pub struct TestSetup {
-    pub core: ShadowGhostCore,
+    pub temp_dir: std::path::PathBuf,
+    pub contact_manager: ContactManager,
+    pub storage_manager: StorageManager,
+    pub event_bus: EventBus,
+    pub peer: Peer,
     test_id: String,
 }
 
 impl TestSetup {
     pub async fn new(test_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let test_id = format!("{}-{}", test_name, uuid::Uuid::new_v4());
+        let temp_dir = std::env::temp_dir().join("shadowghost_test").join(&test_id);
+        std::fs::create_dir_all(&temp_dir)?;
 
-        let mut core = ShadowGhostCore::new_for_test(&test_id)?;
+        let event_bus = EventBus::new();
+        let storage_manager = StorageManager::new(&temp_dir, event_bus.clone())?;
+        storage_manager.initialize().await?;
 
+        let contact_manager = ContactManager::new(&temp_dir)?;
 
-        core.initialize(Some(test_name.to_string())).await?;
+        let port = 8000 + (rand::random::<u16>() % 1000);
+        let peer = Peer::new(test_name.to_string(), format!("127.0.0.1:{}", port));
 
+        // Wait a bit to ensure everything is initialized
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        core.start_server().await?;
-
-
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-        Ok(Self { core, test_id })
+        Ok(Self {
+            temp_dir,
+            contact_manager,
+            storage_manager,
+            event_bus,
+            peer,
+            test_id,
+        })
     }
 
     pub fn get_event_receiver(&self) -> tokio::sync::broadcast::Receiver<AppEvent> {
-        self.core.get_event_bus().subscribe()
+        self.event_bus.subscribe()
     }
 
     pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error>> {
-        self.core.shutdown().await?;
-
-
-        let temp_dir = std::env::temp_dir()
-            .join("shadowghost_test")
-            .join(&self.test_id);
-        if temp_dir.exists() {
-            let _ = std::fs::remove_dir_all(&temp_dir);
+        if self.temp_dir.exists() {
+            std::fs::remove_dir_all(&self.temp_dir)?;
         }
-
         Ok(())
     }
-
 
     pub async fn create_peer(name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new(name).await
     }
 
-
     pub async fn get_contact_count(&self) -> usize {
-        self.core.get_contact_count().await
+        self.contact_manager.get_contacts().len()
     }
-
 
     pub async fn has_contact(&self, name: &str) -> bool {
-        if let Ok(contacts) = self.core.get_contacts().await {
-            contacts.iter().any(|c| c.name == name)
-        } else {
-            false
-        }
+        self.contact_manager
+            .get_contacts()
+            .iter()
+            .any(|c| c.name == name)
     }
-
 
     pub async fn get_contact_names(&self) -> Vec<String> {
-        if let Ok(contacts) = self.core.get_contacts().await {
-            contacts.into_iter().map(|c| c.name).collect()
-        } else {
-            vec![]
-        }
+        self.contact_manager
+            .get_contacts()
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
     }
 
+    pub async fn add_test_contact(
+        &mut self,
+        name: &str,
+    ) -> Result<Contact, Box<dyn std::error::Error>> {
+        let contact = Contact {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            address: format!("127.0.0.1:{}", 8000 + rand::random::<u16>() % 1000),
+            status: ContactStatus::Offline,
+            trust_level: TrustLevel::Unknown,
+            last_seen: Some(chrono::Utc::now()),
+        };
+
+        self.contact_manager.add_contact(contact.clone())?;
+        Ok(contact)
+    }
 
     pub async fn send_test_message(
         &self,
+        from: &str,
         to: &str,
         content: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.core.send_message(to, content).await?;
-        Ok(())
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let message = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            from: from.to_string(),
+            to: to.to_string(),
+            content: content.to_string(),
+            msg_type: shadowghost::network::ChatMessageType::Text,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            delivery_status: shadowghost::network::DeliveryStatus::Sent,
+        };
+
+        let chat_id = format!("{}_{}", from, to);
+        self.storage_manager
+            .save_message(&chat_id, &message)
+            .await?;
+        Ok(message.id)
     }
 
-
-    pub async fn get_message_count(&self, contact: &str) -> usize {
-        if let Ok(messages) = self.core.get_chat_messages(contact).await {
-            messages.len()
-        } else {
-            0
-        }
+    pub async fn get_message_count(&self, chat_id: &str) -> usize {
+        self.storage_manager
+            .get_messages(chat_id)
+            .await
+            .map(|messages| messages.len())
+            .unwrap_or(0)
     }
 
-
-    pub async fn get_last_message(&self, contact: &str) -> Option<String> {
-        if let Ok(messages) = self.core.get_chat_messages(contact).await {
-            messages.last().map(|m| m.content.clone())
-        } else {
-            None
-        }
+    pub async fn get_last_message(&self, chat_id: &str) -> Option<String> {
+        self.storage_manager
+            .get_messages(chat_id)
+            .await
+            .ok()
+            .and_then(|messages| messages.last().map(|m| m.content.clone()))
     }
-
 
     pub async fn wait_for_contacts(&self, expected_count: usize, timeout_ms: u64) -> bool {
         let start = std::time::Instant::now();
@@ -125,10 +158,9 @@ impl TestSetup {
         false
     }
 
-
     pub async fn wait_for_messages(
         &self,
-        contact: &str,
+        chat_id: &str,
         expected_count: usize,
         timeout_ms: u64,
     ) -> bool {
@@ -136,7 +168,7 @@ impl TestSetup {
         let timeout = std::time::Duration::from_millis(timeout_ms);
 
         while start.elapsed() < timeout {
-            if self.get_message_count(contact).await == expected_count {
+            if self.get_message_count(chat_id).await == expected_count {
                 return true;
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -144,63 +176,47 @@ impl TestSetup {
         false
     }
 
-
     pub fn get_test_dir(&self) -> std::path::PathBuf {
-        std::env::temp_dir()
-            .join("shadowghost_test")
-            .join(&self.test_id)
+        self.temp_dir.clone()
     }
 
-
-    pub async fn is_server_running(&self) -> bool {
-        self.core.is_server_started()
+    pub fn get_user_name(&self) -> String {
+        self.peer.name.clone()
     }
-
-
-    pub fn is_initialized(&self) -> bool {
-        self.core.is_initialized()
-    }
-
-
-    pub async fn get_user_name(&self) -> Option<String> {
-        if let Some(peer_info) = self.core.get_peer_info().await {
-
-            if let Some(paren_pos) = peer_info.find(" (") {
-                Some(peer_info[..paren_pos].to_string())
-            } else {
-                Some(peer_info)
-            }
-        } else {
-            None
-        }
-    }
-
 
     pub async fn debug_info(&self) -> String {
         let contacts = self.get_contact_count().await;
-        let user_name = self.get_user_name().await.unwrap_or("Unknown".to_string());
-        let initialized = self.is_initialized();
-        let server_running = self.is_server_running().await;
+        let user_name = self.get_user_name();
 
         format!(
-            "TestSetup[{}]: user={}, contacts={}, initialized={}, server={}",
-            self.test_id, user_name, contacts, initialized, server_running
+            "TestSetup[{}]: user={}, contacts={}",
+            self.test_id, user_name, contacts
         )
+    }
+
+    pub async fn generate_sg_link(&self) -> Result<String, Box<dyn std::error::Error>> {
+        use shadowghost::contacts::generate_sg_link;
+        Ok(generate_sg_link(&self.peer)?)
+    }
+
+    pub async fn add_contact_by_sg_link(
+        &mut self,
+        sg_link: &str,
+    ) -> Result<Contact, Box<dyn std::error::Error>> {
+        use shadowghost::contacts::parse_sg_link;
+        let contact = parse_sg_link(sg_link, &self.peer.name)?;
+        self.contact_manager.add_contact(contact.clone())?;
+        Ok(contact)
     }
 }
 
 impl Drop for TestSetup {
     fn drop(&mut self) {
-
-        let temp_dir = std::env::temp_dir()
-            .join("shadowghost_test")
-            .join(&self.test_id);
-        if temp_dir.exists() {
-            let _ = std::fs::remove_dir_all(&temp_dir);
+        if self.temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&self.temp_dir);
         }
     }
 }
-
 
 pub async fn create_test_group(
     names: &[&str],
@@ -215,37 +231,30 @@ pub async fn create_test_group(
     Ok(setups)
 }
 
-
-pub async fn connect_all(setups: &[TestSetup]) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn connect_all(setups: &mut [TestSetup]) -> Result<(), Box<dyn std::error::Error>> {
     let links: Vec<String> = {
         let mut links = Vec::new();
-        for setup in setups {
-            links.push(setup.core.generate_sg_link().await?);
+        for setup in setups.iter() {
+            links.push(setup.generate_sg_link().await?);
         }
         links
     };
 
-
-    for (i, setup) in setups.iter().enumerate() {
+    for (i, setup) in setups.iter_mut().enumerate() {
         for (j, link) in links.iter().enumerate() {
             if i != j {
-
-                if let Err(e) = setup.core.add_contact_by_sg_link(link).await {
-
+                if let Err(e) = setup.add_contact_by_sg_link(link).await {
                     if !e.to_string().contains("Cannot add yourself") {
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
             }
         }
     }
 
-
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     Ok(())
 }
-
 
 pub async fn shutdown_all(setups: Vec<TestSetup>) -> Result<(), Box<dyn std::error::Error>> {
     for setup in setups {
@@ -254,8 +263,7 @@ pub async fn shutdown_all(setups: Vec<TestSetup>) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-
-pub fn assert_contact_exists(contacts: &[shadowghost::Contact], name: &str) {
+pub fn assert_contact_exists(contacts: &[Contact], name: &str) {
     assert!(
         contacts.iter().any(|c| c.name == name),
         "Contact '{}' not found in contacts: {:?}",
@@ -264,7 +272,7 @@ pub fn assert_contact_exists(contacts: &[shadowghost::Contact], name: &str) {
     );
 }
 
-pub fn assert_contact_count(contacts: &[shadowghost::Contact], expected: usize) {
+pub fn assert_contact_count(contacts: &[Contact], expected: usize) {
     assert_eq!(
         contacts.len(),
         expected,
@@ -275,7 +283,7 @@ pub fn assert_contact_count(contacts: &[shadowghost::Contact], expected: usize) 
     );
 }
 
-pub fn assert_message_exists(messages: &[shadowghost::ChatMessage], content: &str) {
+pub fn assert_message_exists(messages: &[ChatMessage], content: &str) {
     assert!(
         messages.iter().any(|m| m.content == content),
         "Message '{}' not found in messages: {:?}",
@@ -284,7 +292,7 @@ pub fn assert_message_exists(messages: &[shadowghost::ChatMessage], content: &st
     );
 }
 
-pub fn assert_message_count(messages: &[shadowghost::ChatMessage], expected: usize) {
+pub fn assert_message_count(messages: &[ChatMessage], expected: usize) {
     assert_eq!(
         messages.len(),
         expected,
@@ -294,3 +302,25 @@ pub fn assert_message_count(messages: &[shadowghost::ChatMessage], expected: usi
         messages.iter().map(|m| &m.content).collect::<Vec<_>>()
     );
 }
+
+#[macro_export]
+macro_rules! assert_eventually {
+    ($condition:expr, $timeout_ms:expr) => {{
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis($timeout_ms);
+
+        loop {
+            if $condition {
+                break;
+            }
+
+            if start.elapsed() >= timeout {
+                panic!("Condition was not met within {}ms", $timeout_ms);
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }};
+}
+
+pub use assert_eventually;

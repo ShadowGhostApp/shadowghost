@@ -5,6 +5,7 @@ pub mod core;
 pub mod crypto;
 pub mod events;
 pub mod network;
+pub mod p2p;
 pub mod storage;
 pub mod ui;
 pub mod utils;
